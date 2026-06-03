@@ -4,7 +4,6 @@ from compat import QtWidgets, QtCore, QtGui, Qt, Signal
 
 
 class PcbInputWidget(QtWidgets.QStackedWidget):
-    board_loaded = Signal(str)
     generate_clicked = Signal(dict)
 
     def __init__(self, orch=None, parent=None):
@@ -99,7 +98,6 @@ class PcbInputWidget(QtWidgets.QStackedWidget):
         if self.orch:
             self.orch._board_context = self._board_data
 
-        self.board_loaded.emit(fp)
         self._show_summary()
 
     def _show_error(self, msg):

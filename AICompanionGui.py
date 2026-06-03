@@ -134,7 +134,6 @@ class TemplateDialog(QtWidgets.QDialog):
 
 # ── Tree ─────────────────────────────────────────────────────
 class ModelTree(QtWidgets.QTreeWidget):
-    sel_sig = Signal(str)
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setHeaderLabel("Document Objects")
@@ -157,7 +156,7 @@ class ModelTree(QtWidgets.QTreeWidget):
         """)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._ctx)
-        self.itemDoubleClicked.connect(lambda i,c: self.sel_sig.emit(i.data(0,Qt.UserRole)) if i.data(0,Qt.UserRole) else None)
+        self.itemDoubleClicked.connect(lambda i,c: self._sel(i.data(0,Qt.UserRole)) if i.data(0,Qt.UserRole) else None)
         self._t=QtCore.QTimer(self); self._t.timeout.connect(self.refresh); self._t.start(2000)
         self._filter=""
     
@@ -181,7 +180,7 @@ class ModelTree(QtWidgets.QTreeWidget):
             return
         m=QtWidgets.QMenu(self)
         a1=m.addAction("🔍 Select"); a1.triggered.connect(lambda *_, n=name: self._sel(n))
-        a2=m.addAction("✏ Modify"); a2.triggered.connect(lambda *_, n=name: self.sel_sig.emit(n))
+        a2=m.addAction("✏ Copy Name"); a2.triggered.connect(lambda *_, n=name: QtWidgets.QApplication.clipboard().setText(n))
         a3=m.addAction("📏 Measure"); a3.triggered.connect(lambda *_, n=name: self._meas(n))
         a4=m.addAction("🎨 Color"); a4.triggered.connect(lambda *_, n=name: self._col(n))
         a5=m.addAction("🗑 Delete"); a5.triggered.connect(lambda *_, n=name: self._del(n))
@@ -512,7 +511,6 @@ class AISidebar(QtWidgets.QDialog):
         self._inp_container.setFixedHeight(100)
         self._inp_container.setStyleSheet("QFrame{background:#0f1a2a;border:1px solid #2b3a50;border-radius:12px;}")
         inp_lay = QtWidgets.QGridLayout(self._inp_container)
-        inp_lay.setContentsMargins(10, 8, 10, 10)
         inp_lay.setSpacing(6)
         inp_lay.setContentsMargins(10, 10, 10, 10)
         self.inp = QtWidgets.QTextEdit()
