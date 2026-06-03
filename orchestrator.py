@@ -92,20 +92,62 @@ Follow this order for robust parametric models:
 
 Always prefer PartDesign workflow (Body → Sketch → Pad) over standalone Part primitives for parametric designs. Use Part primitives only for simple standalone shapes that don't need sketches.
 
-### TECH DRAW DRAWING GENERATOR (read-only, no import needed)
-DrawingGenerator is already available. Call it directly:
+### TECH DRAW WORKBENCH
+Full TechDraw Python API is available. For simple cases use DrawingGenerator (already in scope):
 ```python
 dg = DrawingGenerator()
-ok, msg = dg.create_page(body_names=["Body", "Lid"],
-                          views=["top", "front", "right", "isometric"],
-                          scale=1.0, page_label="MyDrawing")
-if ok:
-    dg.add_dimension(view_obj, edge_index=0, dim_type="Distance")
+ok, msg = dg.create_page(["Body", "Lid"], views=["top", "isometric"], scale=1.0)
 ```
-- `views`: "top","front","rear","left","right","isometric"
-- `dim_type`: "Distance","Length","Radius","Diameter"
-- DrawingGenerator is READ-ONLY — it never modifies geometry
-- No import needed — it's already in scope
+For advanced drawings (sections, detail views, balloons, exploded views, projection groups), use TechDraw directly:
+```python
+import TechDraw
+page = doc.addObject("TechDraw::DrawPage", "Page")
+template = doc.addObject("TechDraw::DrawSVGTemplate", "Template")
+template.Template = TechDraw.findTemplate("A4_Portrait_ISO.svg")  # or absolute path
+page.Template = template
+
+# View
+view = doc.addObject("TechDraw::DrawViewPart", "TopView")
+view.Source = [body]
+view.Direction = (0, 0, 1)   # top: (0,0,1), front: (0,-1,0), right: (1,0,0), isometric: (1,-1,1)
+view.Scale = 1.0
+page.addView(view)
+
+# Dimension
+dim = doc.addObject("TechDraw::DrawViewDimension", "Dim")
+dim.References2D = [(view, edge)]  # edge from view.getVisibleEdges()
+dim.Type = "Distance"  # Distance, Length, Radius, Diameter
+page.addView(dim)
+
+# Projection Group (multi-view from one source)
+proj = doc.addObject("TechDraw::DrawViewGroup", "Group")
+proj.Source = bodies
+proj.Scale = 1.0
+page.addView(proj)
+
+# Section view
+section = doc.addObject("TechDraw::DrawViewSection", "Section")
+section.Source = bodies
+section.SectionOrigin = FreeCAD.Vector(50, 0, 0)
+section.SectionDirection = (1, 0, 0)  # cut direction
+page.addView(section)
+
+# Detail view
+detail = doc.addObject("TechDraw::DrawViewDetail", "Detail")
+detail.BaseView = view
+detail.Radius = 30
+detail.Scale = 2.0
+page.addView(detail)
+
+# Balloons
+balloon = doc.addObject("TechDraw::DrawViewBalloon", "Balloon")
+balloon.SourceView = view
+balloon.Text = "1"
+balloon.OriginX = 10
+balloon.OriginY = 20
+page.addView(balloon)
+```
+TechDraw is READ-ONLY for 3D geometry — it only creates 2D projections. You cannot break the 3D model by using it.
 
 ### Part Primitives (Part::*)
 | Type | Properties | Example |
