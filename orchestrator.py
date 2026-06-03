@@ -2444,7 +2444,16 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             except Exception as ex:
                 print(f"[AI] AssemblyGraph verify rebuild failed: {ex}")
                 self.assembly = None
-            assembly_issues = self.assembly.verify() if self.assembly and self.assembly._ready else []
+            # Compute at-risk bodies from user input (same scan as build_dependency_chain_context)
+            at_risk_bodies = []
+            if user_input and self.assembly and self.assembly._ready:
+                ul = user_input.lower()
+                at_risk_bodies = list(dict.fromkeys(
+                    name for e in self.assembly.edges
+                    for name in (e.source, e.target)
+                    if name.lower() in ul
+                ))
+            assembly_issues = self.assembly.verify(at_risk_bodies=at_risk_bodies or None) if self.assembly and self.assembly._ready else []
 
             # Build diagnosis
             diagnosis_parts = []

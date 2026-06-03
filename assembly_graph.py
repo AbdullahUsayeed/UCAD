@@ -165,17 +165,35 @@ class AssemblyGraph:
         return "\n".join(lines)
 
     # ── Verification ───────────────────────────────────────
-    def verify(self) -> list[str]:
-        """Check all constraints are still satisfied after recompute.
+    def verify(self, at_risk_bodies=None):
+        """Check constraints + detect interference after recompute.
+
+        When at_risk_bodies is provided (from affected_constraints analysis),
+        only checks constraints and interference involving those bodies.
+        Interference uses bounding-box pre-filter before running expensive
+        ``common()`` boolean.
 
         Returns a list of human-readable violation strings (empty = all satisfied).
         """
+        # Filter edges to at-risk bodies if specified
+        edges_to_check = self.edges
+        if at_risk_bodies:
+            body_set = set(at_risk_bodies)
+            edges_to_check = [e for e in self.edges
+                              if e.source in body_set or e.target in body_set]
+            if not edges_to_check:
+                return []
+
         violations = []
-        for e in self.edges:
+        checked_pairs: set[tuple[str, str]] = set()
+
+        for e in edges_to_check:
             obj_a = self._find(e.source)
             obj_b = self._find(e.target)
             if not obj_a or not obj_b:
                 continue
+
+            # 1. Constraint satisfaction check (existing logic)
             try:
                 pa = obj_a.Placement.Base
                 pb = obj_b.Placement.Base
@@ -185,6 +203,33 @@ class AssemblyGraph:
                     violations.append(v)
             except Exception:
                 pass
+
+            # 2. Interference check — only once per unordered pair
+            pair_key = tuple(sorted([e.source, e.target]))
+            if pair_key in checked_pairs:
+                continue
+            checked_pairs.add(pair_key)
+
+            try:
+                shape_a = getattr(obj_a, "Shape", None)
+                shape_b = getattr(obj_b, "Shape", None)
+                if shape_a is None or shape_b is None:
+                    continue
+                # Bounding-box pre-filter — skip if boxes don't intersect
+                bb_a = shape_a.BoundBox
+                bb_b = shape_b.BoundBox
+                if not bb_a.intersect(bb_b):
+                    continue
+                # Full boolean intersection
+                common = shape_a.common(shape_b)
+                if common and common.Volume > 1e-6:
+                    violations.append(
+                        f"{e.source} and {e.target} INTERFERE — overlap "
+                        f"volume={common.Volume:.1f}mm³"
+                    )
+            except Exception:
+                pass
+
         return violations
 
     def _find(self, label_or_name: str):
