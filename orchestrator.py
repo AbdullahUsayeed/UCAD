@@ -1451,7 +1451,25 @@ The compiler auto-closes rectangles and chains. After the JSON block, use ```pyt
     - `Part::Thickness` / `Part::Offset`: extremely crash-prone on complex shapes. Test on simple geometry first.
     - `Part.BSplineCurve().interpolate()`: coordinate list must be closed (first == last) and have at least 4 points. Avoid duplicate points.
     - `Part::Section`: both inputs must be solid shapes, not faces or wires.
-    PREFER safer alternatives: use PartDesign AdditivePipe (Sweep) over Part::Sweep; use simple Pad/Pocket over Thickness. If you must use these operations, validate parameters carefully and warn the user."""
+    PREFER safer alternatives: use PartDesign AdditivePipe (Sweep) over Part::Sweep; use simple Pad/Pocket over Thickness. If you must use these operations, validate parameters carefully and warn the user.
+19. **DEPENDENCY CHAIN CONSISTENCY** — Many models are built as a feature chain
+    (e.g. BaseBox → Cavity → Standoff_1..4 → ScrewHole_1..4). When you modify
+    a dimension (Height/Length/Width/Depth) of one feature, identify ALL features
+    in that dependency chain and apply the SAME delta to each so internal geometry
+    stays consistent. Example: if BaseBox.Height increases by 500mm, the Cavity
+    depth must also increase by 500mm, all Standoff_N heights by 500mm, and all
+    ScrewHole_N depths by 500mm. Always add print() verification showing final
+    dimensions of every feature in the chain so the user can confirm consistency.
+20. **RELATIVE VS ABSOLUTE INTENT** — Distinguish between relative and absolute changes:
+    - "increase by X", "decrease by X", "add X", "make taller by X" = RELATIVE change.
+      Get the current value of EVERY feature in the chain, then add/subtract X.
+    - "set to X", "make it X", "change to X", "exactly X" = ABSOLUTE change.
+      Assign X to EVERY feature in the chain that matches the property.
+    When unsure, assume RELATIVE and explicitly check what the user meant.
+21. **DEPENDENCY GRAPH** — Before modifying any property, scan the document for objects
+    that depend on your target (check `obj.InList` and `obj.OutList` to find the chain).
+    The DEPENDENCY CHAIN section in your prompt lists the objects you must keep consistent.
+    Update ALL of them, not just the one the user mentioned by name."""
         mode_rules = {
             "plan": """### CURRENT MODE: PLAN
 Your job is to create a detailed numbered plan for the user's request.
@@ -1505,7 +1523,69 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
 
     ### OUTPUT FORMAT:
     Brief analysis (1-2 lines max), then complete ```python code block(s)."""
-    
+
+    def build_dependency_chain_context(self):
+        """Build a DEPENDENCY CHAIN section for the AI prompt.
+        
+        Scans the active document for objects that form feature chains
+        (via InList/OutList/Body.Group) and lists them so the AI knows
+        exactly which objects must be updated together.
+        """
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc or not doc.Objects:
+                return ""
+            obs = self.capture_observation_structured()
+            lines = ["### DEPENDENCY CHAIN — update ALL objects in a chain together:"]
+            found_any = False
+            for e in obs:
+                deps = e.get("deps", {})
+                name = e.get("label") or e.get("name", "?")
+                typ = e.get("type", "")
+                # Check if this object has meaningful dependencies
+                has_deps = bool(deps.get("parents") or deps.get("children")
+                                or deps.get("features") or deps.get("attached_to"))
+                if not has_deps:
+                    continue
+                found_any = True
+                dims = []
+                obj = doc.getObject(e.get("name", ""))
+                if obj:
+                    for p in self.DIMENSION_PROPS:
+                        v = self._get_dimension_value(obj, p)
+                        if v is not None:
+                            dims.append(f"{p}={v:.0f}")
+                chain_parts = []
+                if deps.get("parents"):
+                    chain_parts.append(f"depends_on=[{','.join(deps['parents'][:3])}]")
+                if deps.get("children"):
+                    chain_parts.append(f"used_by=[{','.join(deps['children'][:3])}]")
+                if deps.get("features"):
+                    chain_parts.append(f"features=[{' → '.join(deps['features'][:5])}]")
+                if deps.get("attached_to"):
+                    chain_parts.append(f"attached_to={deps['attached_to']}")
+                suffix = f" ({', '.join(chain_parts)})" if chain_parts else ""
+                dim_str = f" [{', '.join(dims)}]" if dims else ""
+                lines.append(f"  - {name}{dim_str}{suffix}")
+            if not found_any:
+                return ""
+            # Also add a flat list of all objects with Height/Length for quick reference
+            lines.append("\nAll objects with dimensional properties:")
+            for e in obs:
+                name = e.get("label") or e.get("name", "?")
+                obj = doc.getObject(e.get("name", ""))
+                if obj:
+                    dims = []
+                    for p in self.DIMENSION_PROPS:
+                        v = self._get_dimension_value(obj, p)
+                        if v is not None:
+                            dims.append(f"{p}={v:.0f}")
+                    if dims:
+                        lines.append(f"  {name}: {', '.join(dims)}")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
     # ── Transaction Management ───────────────────────────────
     def _begin_transaction(self, label="AI Operation"):
         try:
@@ -1895,6 +1975,10 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             f"IMPORTANT: The CURRENT SCENE above is the authoritative document state. "
             f"If anything in the history or prior observation differs, the current scene is correct.\n"
         )
+        # Inject dependency chain so AI knows which objects must be updated together
+        dep_chain = self.build_dependency_chain_context()
+        if dep_chain:
+            prompt += f"\n{dep_chain}\n"
         
         msgs = [
             {"role": "system", "content": self.build_system_prompt("build")},
@@ -1936,6 +2020,10 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             instruction += board_section
         context_msg = {"role":"system","content":f"{role_label.get(mode, role_label['build'])}\n\n{instruction}"}
         user_prompt = self.build_user_prompt(user_input)
+        if mode in ("build", "plan"):
+            dep_chain = self.build_dependency_chain_context()
+            if dep_chain:
+                user_prompt += f"\n\n{dep_chain}"
         user_msg = {"role":"user","content":user_prompt}
         api_msgs = [context_msg, user_msg]
         if self.provider in ("openai",) and FreeCADGui.activeDocument():
@@ -2063,6 +2151,270 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
                 "'YES I understand the crash risk' before generating this code."
             )
         return True, "OK"
+
+    def _get_dimension_str(self, obj):
+        """Return a short string describing key dimensions of an object."""
+        parts = []
+        for p in self.DIMENSION_PROPS:
+            v = self._get_dimension_value(obj, p)
+            if v is not None:
+                parts.append(f"{p}={v:.0f}")
+        if hasattr(obj, 'Length') and hasattr(obj, 'TypeId') and 'PartDesign' in obj.TypeId:
+            try:
+                parts.append(f"Pad={float(obj.Length):.0f}")
+            except Exception:
+                pass
+        return ", ".join(parts) if parts else ""
+
+    def _check_geometry_bounds(self, doc):
+        """Post-recompute check for spatial consistency of enclosure features.
+        
+        Verifies: cavity < box, standoff <= cavity depth, hole <= standoff height.
+        Returns list of geometry issue strings.
+        """
+        issues = []
+        try:
+            if not doc:
+                return issues
+            # Find labeled objects by type
+            box = cavity = None
+            standoffs = []
+            holes = []
+            for obj in doc.Objects:
+                if self._is_datum(obj):
+                    continue
+                label = (obj.Label or "").lower()
+                name = obj.Name.lower()
+                if "basebox" in label or "basebox" in name or "base_box" in label:
+                    box = obj
+                elif "cavity" in label or "cavity" in name:
+                    cavity = obj
+                elif "standoff" in label or "standoff" in name:
+                    standoffs.append(obj)
+                elif "screwhole" in label or "screwhole" in name or "screw_hole" in label:
+                    holes.append(obj)
+                elif "hole" in name and not any(k in label for k in ("datum", "origin")):
+                    if obj not in holes and obj not in standoffs:
+                        holes.append(obj)
+
+            if box and cavity:
+                # Cavity must be smaller than box in all dimensions
+                for prop in ("Height", "Length", "Width"):
+                    bv = self._get_dimension_value(box, prop)
+                    cv = self._get_dimension_value(cavity, prop)
+                    if bv is not None and cv is not None and cv >= bv:
+                        issues.append(
+                            f"Cavity.{prop}={cv:.0f} >= BaseBox.{prop}={bv:.0f} "
+                            f"(cavity must be smaller than the box)"
+                        )
+                # Pad Length (depth) of cavity must be less than box height
+                if hasattr(cavity, 'Length'):
+                    try:
+                        cav_depth = float(cavity.Length)
+                        box_h = self._get_dimension_value(box, "Height")
+                        if box_h is not None and cav_depth >= box_h:
+                            issues.append(
+                                f"Cavity Pad depth={cav_depth:.0f} >= Box Height={box_h:.0f}"
+                            )
+                    except Exception:
+                        pass
+
+            for s in standoffs:
+                s_label = s.Label or s.Name
+                s_h = self._get_dimension_value(s, "Height")
+                if s_h is not None and box:
+                    box_h = self._get_dimension_value(box, "Height")
+                    if box_h is not None and s_h > box_h:
+                        issues.append(
+                            f"{s_label} Height={s_h:.0f} > BaseBox Height={box_h:.0f} "
+                            f"(standoff taller than box)"
+                        )
+                if s_h is not None and cavity:
+                    cav_d = None
+                    if hasattr(cavity, 'Length'):
+                        try:
+                            cav_d = float(cavity.Length)
+                        except Exception:
+                            pass
+                    if cav_d is None:
+                        cav_d = self._get_dimension_value(cavity, "Depth")
+                    if cav_d is not None and s_h > cav_d:
+                        issues.append(
+                            f"{s_label} Height={s_h:.0f} > Cavity depth={cav_d:.0f} "
+                            f"(standoff taller than cavity)"
+                        )
+
+            for h in holes:
+                h_label = h.Label or h.Name
+                h_d = self._get_dimension_value(h, "Depth")
+                if h_d is not None and standoffs:
+                    max_so_h = max(
+                        (self._get_dimension_value(so, "Height") or 0) for so in standoffs
+                    )
+                    if max_so_h > 0 and h_d > max_so_h:
+                        issues.append(
+                            f"{h_label} Depth={h_d:.0f} > standoff height={max_so_h:.0f} "
+                            f"(screw hole deeper than standoff)"
+                        )
+        except Exception:
+            pass
+        return issues
+
+    def verify_modifications(self, user_input, code, touched_uids, pre_snapshot=None, retry_tier=1):
+        """Post-execution verification: detect if code missed dependent features.
+        
+        After AI code modifies some objects' dimensions, this checks whether
+        objects in the same dependency chain were left behind (e.g. changed
+        BaseBox.Height but not Cavity depth or Standoff heights). Also checks
+        geometric consistency (cavity must fit inside box, etc.).
+        
+        Args:
+            pre_snapshot: dict from _capture_dimension_snapshot() before execution
+            retry_tier: 1=missed objects only, 2=+original values, 3=+code hint
+        
+        Returns (is_consistent, diagnosis_str).
+        """
+        if not user_input or not touched_uids:
+            return True, ""
+        # Classify user intent
+        ul = user_input.lower()
+        is_relative = any(w in ul for w in ("increase", "decrease", "add", "subtract",
+                                             "plus", "minus", "more", "less", "higher",
+                                             "lower", "taller", "shorter", "wider",
+                                             "thicker", "thinner", "deeper", "shallower",
+                                             "grow", "shrink", "expand", "reduce",
+                                             "by "))
+        is_absolute = any(w in ul for w in ("set to", "set it to", "make it",
+                                            "exactly", "precisely", "change to",
+                                            "=", "equals"))
+        change_kw = ["increase", "decrease", "change", "modify", "update",
+                      "set", "height", "length", "width", "depth", "taller",
+                      "shorter", "wider", "thicker", "deeper", "resize",
+                      "scale", "dimension", "size"]
+        if not any(k in ul for k in change_kw):
+            return True, ""
+
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return True, ""
+
+            # Build current observation (has deps info)
+            post_obs = self.capture_observation_structured()
+
+            # Map: obj name → entry
+            obs_by_name = {}
+            for e in post_obs:
+                obs_by_name[e["name"]] = e
+
+            # Map: touched UID → name and label
+            touched_names = set()
+            touched_labels = set()
+            for uid in touched_uids:
+                if "." in uid:
+                    nm = uid.split(".", 1)[1]
+                    touched_names.add(nm)
+                    obj = doc.getObject(nm)
+                    if obj:
+                        touched_labels.add(obj.Label or nm)
+
+            # Build dependency graph from observation
+            child_map = {}
+            for e in post_obs:
+                deps = e.get("deps", {})
+                parents = deps.get("parents", [])
+                for p_label in parents:
+                    child_map.setdefault(p_label, []).append(e)
+
+            # For each touched object, find dependents that were NOT touched
+            missed = []
+            for t_name in touched_names:
+                t_entry = obs_by_name.get(t_name)
+                if not t_entry:
+                    continue
+                t_label = t_entry.get("label", t_name)
+                dependents = child_map.get(t_label, [])
+                for dep in dependents:
+                    dep_name = dep.get("name", "")
+                    if dep_name in touched_names:
+                        continue
+                    dep_label = dep.get("label", dep_name)
+                    dep_type = dep.get("type", "")
+                    dim_type = ("PartDesign" in dep_type or "Part::" in dep_type)
+                    if dim_type:
+                        missed.append(dep_label)
+
+            # Also check Body-internal feature chains
+            for e in post_obs:
+                deps = e.get("deps", {})
+                features = deps.get("features", [])
+                if not features:
+                    continue
+                body_touched = [f for f in features if any(
+                    f == obs_by_name.get(tn, {}).get("label", "") for tn in touched_names
+                )]
+                if body_touched and len(body_touched) < len(features):
+                    body_untouched = [f for f in features if f not in body_touched
+                                      and not any(f.startswith(("X-", "Y-", "Z-", "XY", "XZ", "YZ")))]
+                    for f in body_untouched:
+                        if f not in missed:
+                            missed.append(f)
+
+            # Geometry bounds check
+            geo_issues = self._check_geometry_bounds(doc)
+
+            # Build diagnosis
+            diagnosis_parts = []
+
+            # Intent classification
+            intent_hint = ""
+            if is_relative and not is_absolute:
+                intent_hint = ("The user asked for a RELATIVE change (increase/decrease by X). "
+                               "Compute the current value, apply the delta, then update ALL "
+                               "dependent features by the same delta.")
+            elif is_absolute and not is_relative:
+                intent_hint = ("The user asked for an ABSOLUTE change (set to X). "
+                               "Set every feature in the dependency chain to a consistent value.")
+
+            if missed:
+                msg = (f"Incomplete: touched {len(touched_names)} object(s) but missed: "
+                       f"{', '.join(missed[:8])}.")
+                # Add original values from pre_snapshot (tier 2+)
+                if pre_snapshot and retry_tier >= 2:
+                    orig_lines = []
+                    for m in missed[:8]:
+                        orig = pre_snapshot.get(m, {}) or {}
+                        if orig:
+                            vals = ", ".join(f"{p}={v:.0f}" for p, v in sorted(orig.items()))
+                            orig_lines.append(f"  {m}: was {vals}")
+                        else:
+                            # Try finding by label in snapshot keys
+                            for snap_key, snap_vals in pre_snapshot.items():
+                                if m.lower() in snap_key.lower():
+                                    vals = ", ".join(f"{p}={v:.0f}" for p, v in sorted(snap_vals.items()))
+                                    orig_lines.append(f"  {m}: was {vals}")
+                                    break
+                    if orig_lines:
+                        msg += "\nOriginal values before execution:\n" + "\n".join(orig_lines)
+                    if retry_tier >= 3:
+                        msg += ("\nFix pattern: for each missed feature, get its current value, "
+                                "add the same delta applied to the touched features, and assign it:\n"
+                                "  missed_obj.Height = find('missed_obj').Height + delta")
+                if intent_hint:
+                    msg += f"\n{intent_hint}"
+                diagnosis_parts.append(msg)
+
+            if geo_issues:
+                diagnosis_parts.append(
+                    "Geometry inconsistency:\n- " + "\n- ".join(geo_issues[:4])
+                )
+
+            if diagnosis_parts:
+                return False, "\n\n".join(diagnosis_parts)
+
+            return True, ""
+        except Exception:
+            return True, ""
 
     # ── Sketch Constraint Validator ────────────────────────────
 
@@ -2345,7 +2697,161 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
 
 
 
-    def execute_code(self, code):
+    # ── Dimension Sanity Checks ───────────────────────────────
+    DIMENSION_PROPS = {"Height", "Length", "Width", "Radius", "Depth", "Thickness"}
+
+    def _get_dimension_value(self, obj, prop):
+        """Safely get a numeric dimension property from an object, or None."""
+        try:
+            val = getattr(obj, prop, None)
+            if val is not None:
+                return float(val)
+        except Exception:
+            pass
+        # Check Pad/Pocket Length
+        try:
+            if hasattr(obj, 'Length') and prop in ("Height", "Depth"):
+                return float(obj.Length)
+        except Exception:
+            pass
+        return None
+
+    def validate_dimension_sanity(self, code, user_input=""):
+        """Pre-execution check: flag physically unreasonable dimension assignments.
+        
+        Detects when the AI blindly converts units (e.g. 50cm → 500mm) for a context
+        where the value is obviously wrong (e.g. 500mm tall PCB enclosure).
+        
+        Returns (safe, warning_message).
+        """
+        try:
+            tree = ast.parse(code)
+        except Exception:
+            return True, ""
+
+        # Find all assignments to dimensional properties
+        assignments = []  # [(lineno, obj_var, prop, value)]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Attribute):
+                        prop_name = target.attr
+                        if prop_name in self.DIMENSION_PROPS:
+                            val = None
+                            if isinstance(node.value, ast.Constant):
+                                val = node.value.value
+                            elif isinstance(node.value, ast.UnaryOp) and isinstance(node.value.op, ast.USub):
+                                if isinstance(node.value.operand, ast.Constant):
+                                    val = -node.value.operand.value
+                            if val is not None and isinstance(val, (int, float)):
+                                base = target.value
+                                var = ""
+                                if isinstance(base, ast.Name):
+                                    var = base.id
+                                elif isinstance(base, ast.Attribute):
+                                    var = base.attr
+                                assignments.append((node.lineno, var, prop_name, float(val)))
+
+        if not assignments:
+            return True, ""
+
+        # Get current document context for size comparison
+        warnings = []
+        try:
+            doc = FreeCAD.ActiveDocument
+            existing_max = 0.0
+            existing_min = float('inf')
+            if doc:
+                for obj in doc.Objects:
+                    if self._is_datum(obj):
+                        continue
+                    for p in self.DIMENSION_PROPS:
+                        v = self._get_dimension_value(obj, p)
+                        if v is not None:
+                            existing_max = max(existing_max, v)
+                            existing_min = min(existing_min, v)
+        except Exception:
+            existing_max = 0.0
+            existing_min = float('inf')
+
+        for lineno, var, prop, val in assignments:
+            # Absolute magnitude check: > 500mm on small objects is suspicious
+            if val > 500 and existing_max > 0 and existing_max < 60:
+                desc = f"{var}.{prop}" if var else prop
+                warnings.append(
+                    f"Line {lineno}: {desc} = {val}mm is very large (>500mm) while existing "
+                    f"objects are ~{existing_max:.0f}mm. If the user specified cm, verify "
+                    f"the conversion (e.g. 50cm → 50mm, not 500mm)."
+                )
+            # Disproportionate change: new value > 20x any existing dimension
+            if existing_min != float('inf') and val > existing_max * 20 and existing_max > 0:
+                desc = f"{var}.{prop}" if var else prop
+                if not any(f"Line {lineno}: {desc}" in w for w in warnings):
+                    warnings.append(
+                        f"Line {lineno}: {desc} = {val}mm is >20x larger than any existing "
+                        f"dimension ({existing_max:.0f}mm). This is likely a unit error."
+                    )
+            # Specific enclosure context: cavity > box or standoff > cavity
+            if var and prop in ("Height", "Length", "Width", "Depth"):
+                try:
+                    if doc:
+                        obj = doc.getObject(var)
+                        if obj is None:
+                            for o in doc.Objects:
+                                if o.Label == var or o.Name.lower() == var.lower():
+                                    obj = o
+                                    break
+                        if obj and hasattr(obj, prop):
+                            current = float(getattr(obj, prop))
+                            ratio = val / current if current > 0 else float('inf')
+                            if ratio > 10 and current > 0:
+                                warnings.append(
+                                    f"Line {lineno}: {var}.{prop} changes from {current:.0f}mm to "
+                                    f"{val:.0f}mm ({ratio:.0f}x increase). If this is a relative "
+                                    f"change (e.g. 'increase by X'), compute current+X instead."
+                                )
+                except Exception:
+                    pass
+
+        if warnings:
+            return False, "⚠️ DIMENSION SANITY CHECK:\n" + "\n".join(warnings[:3])
+        return True, ""
+
+    def _capture_dimension_snapshot(self):
+        """Snapshot of all objects' dimensional properties before execution.
+        
+        Stored as dict[object_name_or_label][prop_name] = float_value.
+        Used by verify_modifications to report original values in retry context.
+        """
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return {}
+            snap = {}
+            for obj in doc.Objects:
+                if self._is_datum(obj):
+                    continue
+                key = obj.Label or obj.Name
+                props = {}
+                for p in self.DIMENSION_PROPS:
+                    v = self._get_dimension_value(obj, p)
+                    if v is not None:
+                        props[p] = v
+                if hasattr(obj, 'TypeId') and 'PartDesign' in obj.TypeId:
+                    for fp in ("Length", "Depth"):
+                        try:
+                            v = float(getattr(obj, fp, 0))
+                            if v > 0:
+                                props[fp] = v
+                        except Exception:
+                            pass
+                if props:
+                    snap[key] = props
+            return snap
+        except Exception:
+            return {}
+
+    def execute_code(self, code, user_input=""):
         # Pre-execution syntax and runtime-risk validation
         valid, msg = self.validate_code(code)
         if not valid:
@@ -2361,7 +2867,12 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
         sketch_err = self.validate_and_report_sketch(code)
         if sketch_err:
             return False, sketch_err
+        # Pre-execution dimension sanity check
+        dim_safe, dim_warn = self.validate_dimension_sanity(code, user_input)
+        if not dim_safe:
+            return False, dim_warn
         self._touched_objects = set()
+        self._pre_execution_snapshot = self._capture_dimension_snapshot()
 
         old_doc_names = set(FreeCAD.listDocuments().keys())
         old_doc_name = FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else None

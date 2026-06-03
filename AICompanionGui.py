@@ -1348,7 +1348,7 @@ class AISidebar(QtWidgets.QDialog):
                     self.msg("System", "Send **execute** or **go ahead** to run this plan.", chat=True)
                     self._plan_paused = True
                     self._pending_input = self._pending_input or raw_text
-                self._finish()
+                self._finish(keep_plan=True)
                 return
 
             # PCB mode — switch to chat after generation
@@ -1377,7 +1377,18 @@ class AISidebar(QtWidgets.QDialog):
                 return
 
             combined_code = code
-            success, message = self.orch.execute_code(combined_code)
+            success, message = self.orch.execute_code(combined_code, user_input=self._pending_input)
+            # Post-execution verification: check if code missed dependent features
+            if success:
+                next_tier = min(self._retries + 1, 3)
+                consistent, v_diag = self.orch.verify_modifications(
+                    self._pending_input, combined_code, self.orch._touched_objects,
+                    pre_snapshot=self.orch._pre_execution_snapshot,
+                    retry_tier=next_tier
+                )
+                if not consistent:
+                    success = False
+                    message = v_diag
             total_steps = len(self._plan_steps) if self._plan_steps else 1
             self._status_text.setText(f"⚡ Step {self._plan_step_idx + 1}/{total_steps}")
 
@@ -1543,19 +1554,20 @@ class AISidebar(QtWidgets.QDialog):
             self.msg("Error", str(e))
             self._finish()
 
-    def _finish(self):
+    def _finish(self, keep_plan=False):
         self.spin.setVisible(False)
         self._worker_thread = None
         self._code_worker = None
         self._retries = 0
-        self._pending_input = ""
-        self._pending_msgs = None
         self._step_retry_state = None
-        self._plan_paused = False
-        self._plan_steps = []
-        self._plan_step_idx = 0
-        self._stop_step_btn.setVisible(False)
-        self._cancel_plan_btn.setVisible(False)
+        if not keep_plan:
+            self._pending_input = ""
+            self._pending_msgs = None
+            self._plan_paused = False
+            self._plan_steps = []
+            self._plan_step_idx = 0
+            self._stop_step_btn.setVisible(False)
+            self._cancel_plan_btn.setVisible(False)
         self._set_dot("#3fb950")
         self._status_text.setText("Ready"); self._status_text.setStyleSheet("color:#8b949e;font-size:11px;font-weight:500;")
         if hasattr(self, 'tree') and self.tree:
