@@ -2151,6 +2151,25 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             dep_chain = self.build_dependency_chain_context(user_input=user_input)
             if dep_chain:
                 user_prompt += f"\n\n{dep_chain}"
+        # Clarification turn: if the user's request lacks concrete dimensions,
+        # tell the AI to ask clarifying questions instead of guessing values
+        if mode in ("build", "plan") and not retry_context:
+            ul = user_input.lower()
+            has_numbers = any(c.isdigit() for c in ul)
+            has_units = any(u in ul for u in ("mm", "cm", "inch", "inches", "m", "feet", "ft"))
+            has_relative = any(w in ul for w in ("increase", "decrease", "add", "subtract",
+                "plus", "minus", "more", "less", "higher", "lower", "taller", "shorter",
+                "wider", "thicker", "thinner", "deeper", "shallower", "grow", "shrink",
+                "expand", "reduce", "by "))
+            if not (has_numbers or has_units or has_relative):
+                clarification = (
+                    "\n\n### CLARIFICATION REQUIRED\nThe user's request is vague — it does not specify concrete dimensions, "
+                    "numbers, units, or relative changes (e.g. 'increase by 10mm'). Do NOT guess values. "
+                    "Instead, respond with a brief question asking for the missing parameters "
+                    "(e.g. 'How tall should the box be in mm?' or 'By how much should I increase the height?'). "
+                    "Wait for the user to provide specific numbers before generating any code."
+                )
+                context_msg["content"] += clarification
         user_msg = {"role":"user","content":user_prompt}
         api_msgs = [context_msg, user_msg]
         if self.provider in ("openai",) and FreeCADGui.activeDocument():
@@ -3022,10 +3041,12 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
         
         Creates checkpoint files in <tempdir>/aifc_checkpoints/.
         Keeps the last 5 checkpoints per document to avoid unbounded disk use.
+        Stores the path in self._last_checkpoint for backtracking recovery.
         This is the last line of defense against C++ segfaults inside FreeCAD
         that bypass Python's exception handling entirely.
         """
         import tempfile, os, glob, time
+        self._last_checkpoint = None
         try:
             doc = FreeCAD.ActiveDocument
             if not doc:
@@ -3036,6 +3057,7 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (doc.Label or doc.Name))
             path = os.path.join(ck_dir, f"{safe_name}_{ts}.FCStd")
             doc.saveCopy(path)
+            self._last_checkpoint = path
             # Keep only the 5 most recent checkpoints for this document
             prefix = os.path.join(ck_dir, f"{safe_name}_")
             existing = sorted((p for p in glob.glob(prefix + "*.FCStd")), reverse=True)

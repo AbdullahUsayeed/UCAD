@@ -89,8 +89,14 @@ class PcbInputWidget(QtWidgets.QStackedWidget):
     def _load_board(self, fp):
         self._board_path = fp
         try:
-            from pcb_parser import parse
+            from pcb_parser import parse, validate_board_data
             self._board_data = parse(fp)
+            _, parse_warnings = validate_board_data(self._board_data)
+            if parse_warnings:
+                for w in parse_warnings[:3]:
+                    print(f"[PCB] Warning: {w}")
+                if len(parse_warnings) > 3:
+                    print(f"[PCB] ... and {len(parse_warnings) - 3} more warnings")
         except Exception as e:
             self._show_error(f"Failed to parse: {e}")
             return

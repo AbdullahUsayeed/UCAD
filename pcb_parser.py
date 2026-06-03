@@ -228,6 +228,56 @@ def _get_edge_connectors(components, dimensions):
     return connectors
 
 
+def validate_board_data(data):
+    """Check parsed board data for completeness and structural validity.
+    
+    Returns (is_valid: bool, warnings: list[str]).
+    Malformed data can produce crashes in FreeCAD — this catches issues before
+    they reach the geometry pipeline.
+    """
+    warnings = []
+
+    # 1. Top-level keys
+    required_keys = ("dimensions", "mounting_holes", "components", "edge_connectors")
+    for k in required_keys:
+        if k not in data:
+            warnings.append(f"Missing top-level key: '{k}' — enclosure will be empty or fallback.")
+
+    dims = data.get("dimensions", {})
+
+    # 2. Dimensions sub-keys
+    for k in ("width", "height"):
+        v = dims.get(k, 0)
+        if not isinstance(v, (int, float)) or v <= 0:
+            warnings.append(f"Board {k} is {v} — expected positive number. Board outline may not have been detected.")
+    for k in ("x_min", "y_min", "x_max", "y_max"):
+        if k not in dims:
+            warnings.append(f"Missing dimension key '{k}' — board origin may be wrong.")
+
+    # 3. Components fields
+    for i, c in enumerate(data.get("components", [])):
+        for f in ("ref", "name", "x", "y", "height"):
+            if f not in c:
+                warnings.append(f"Component #{i} missing field '{f}' — will use fallback value.")
+
+    # 4. Mounting holes fields
+    for i, h in enumerate(data.get("mounting_holes", [])):
+        for f in ("x", "y", "diameter"):
+            if f not in h:
+                warnings.append(f"Mounting hole #{i} missing field '{f}' — hole may be placed incorrectly.")
+
+    # 5. Warn on structural gaps
+    if not data.get("components"):
+        warnings.append("No components found on board — check that the file has footprint definitions.")
+    if not data.get("mounting_holes"):
+        warnings.append("No mounting holes found — enclosure may lack mounting features.")
+    for fld in ("x_min", "x_max", "y_min", "y_max"):
+        if fld in dims and dims[fld] == 0:
+            warnings.append(f"Board {fld} is 0 — board may be positioned at origin unexpectedly.")
+
+    return len(warnings) == 0, warnings
+
+
 if __name__ == "__main__":
     import sys
     test_files = [

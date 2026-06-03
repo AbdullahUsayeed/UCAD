@@ -1414,6 +1414,40 @@ class AISidebar(QtWidgets.QDialog):
                 self._launch_worker(ctx, self._pending_input)
                 return
             elif not success:
+                # Plan backtracking: restore checkpoint and ask AI for a different approach
+                ck_path = getattr(self.orch, '_last_checkpoint', None)
+                in_plan = bool(self._plan_steps) and self._plan_step_idx > 0 and self._plan_step_idx < len(self._plan_steps)
+                if in_plan and ck_path and os.path.exists(ck_path):
+                    try:
+                        old_doc = FreeCAD.ActiveDocument
+                        old_name = old_doc.Name if old_doc else None
+                        FreeCAD.open(ck_path)
+                        if old_name and old_name in FreeCAD.listDocuments():
+                            FreeCAD.closeDocument(old_name)
+                        self._plan_step_idx -= 1
+                        self._retries = 0
+                        self._step_retry_state = None
+                        step_num = self._plan_step_idx + 1
+                        self.msg("System",
+                            f"🔄 Step {step_num} failed after {MAX_RETRIES} attempts. "
+                            f"Rolled back to pre-step state. Proposing alternative approach.",
+                            chat=True
+                        )
+                        fresh_obs = self.orch.capture_observation()
+                        ctx = self.orch.build_messages(self._pending_input,
+                            mode="build",
+                            retry_context=(
+                                f"Step {step_num} failed: {message}. "
+                                "Your approach did not work. Propose a FUNDAMENTALLY DIFFERENT approach "
+                                f"for step {step_num} that avoids this failure. "
+                                f"Do NOT retry the same approach. Current scene: {fresh_obs}"
+                            )
+                        )
+                        self._pending_msgs = ctx
+                        self._launch_worker(ctx, self._pending_input)
+                        return
+                    except Exception as ex:
+                        self.msg("Error", f"Backtrack restore failed: {ex}, falling back to hard failure.")
                 self.msg("Error", f"❌ Failed after {MAX_RETRIES} retries: {message}")
                 self.orch.record_result(self._pending_input, combined_code, False, message, self._retries)
                 self._finish()
