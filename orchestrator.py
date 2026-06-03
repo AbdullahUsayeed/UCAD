@@ -859,6 +859,10 @@ class AnthropicAdapter(ProviderAdapterBase):
 
 class BackendAdapter(ProviderAdapterBase):
     """Proxies to Railway backend instead of calling provider directly."""
+    _auth_token: str = ""
+    @classmethod
+    def set_auth_token(cls, token: str):
+        cls._auth_token = token
     def build_request(self, model, messages, api_key=None, api_url=None):
         body = {
             "messages": messages,
@@ -868,6 +872,8 @@ class BackendAdapter(ProviderAdapterBase):
             "api_url": None,
         }
         headers = {"Content-Type": "application/json"}
+        if self._auth_token:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
         return {"url": api_url, "data": json.dumps(body).encode(), "headers": headers}
     def parse_response(self, response_json):
         return response_json.get("content", "")
@@ -1144,6 +1150,9 @@ class AIOrchestrator(QtCore.QObject):
         self._touched_objects = set()
         self.allow_expensive_fallback = True
         self._board_context = None
+        self._backend_auth_token = os.environ.get("BACKEND_AUTH_TOKEN", "")
+        if self.provider == "backend" and self._backend_auth_token:
+            BackendAdapter.set_auth_token(self._backend_auth_token)
         # Don't load old conversation on init — each session starts fresh
         
     def _get_macro_dir(self):

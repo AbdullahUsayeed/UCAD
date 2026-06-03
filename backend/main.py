@@ -1,15 +1,47 @@
-"""Railway backend for AI Companion — proxies AI provider calls."""
+"""Railway backend for AI Companion — auth, models, and provider proxy."""
 
 import os
 import json
+import secrets
+import hashlib
 from typing import Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 
 app = FastAPI(title="AI Companion Backend")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ── Auth config ────────────────────────────────────────────────
+
+BACKEND_KEY = os.environ.get("BACKEND_KEY", "dev-key-change-me")
+USERS_FILE = "users.json"
+
+def _load_users():
+    try:
+        with open(USERS_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def _save_users(users):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f)
+
+def _hash_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
+
+def _verify_token(authorization: Optional[str] = None) -> str:
+    if not authorization:
+        raise HTTPException(401, "Missing Authorization header")
+    token = authorization.removeprefix("Bearer ").strip()
+    users = _load_users()
+    for uid, data in users.items():
+        if data.get("token") == token:
+            return uid
+    raise HTTPException(401, "Invalid or expired token")
+
 
 # ── Provider config ────────────────────────────────────────────
 
@@ -35,6 +67,9 @@ OPENAI_COMPAT = {"deepseek","openai","xai","mistral","cohere","perplexity",
 
 # ── Request/Response models ────────────────────────────────────
 
+class LoginRequest(BaseModel):
+    backend_key: str
+
 class GenerateRequest(BaseModel):
     messages: list
     api_key: str
@@ -49,7 +84,6 @@ def _build_openai_request(model: str, messages: list, api_key: str, api_url: str
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     body = {"model": model, "messages": messages}
     return api_url, headers, body
-
 
 def _build_anthropic_request(model: str, messages: list, api_key: str, api_url: str) -> tuple:
     system = None
@@ -68,7 +102,6 @@ def _build_anthropic_request(model: str, messages: list, api_key: str, api_url: 
         body["system"] = system
     headers = {"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"}
     return api_url, headers, body
-
 
 def _build_google_request(model: str, messages: list, api_key: str, api_url: str) -> tuple:
     contents = []
@@ -90,14 +123,11 @@ def _build_google_request(model: str, messages: list, api_key: str, api_url: str
     headers = {"Content-Type": "application/json"}
     return url, headers, body
 
-
 def _parse_openai_response(data: dict) -> str:
     return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
-
 def _parse_anthropic_response(data: dict) -> str:
     return data.get("content", [{}])[0].get("text", "")
-
 
 def _parse_google_response(data: dict) -> str:
     try:
@@ -105,16 +135,54 @@ def _parse_google_response(data: dict) -> str:
     except (KeyError, IndexError):
         return ""
 
+AVAILABLE_MODELS = [
+    {"label": "DeepSeek Flash (V3)", "provider": "deepseek", "model": "deepseek-chat"},
+    {"label": "DeepSeek Reasoner R1", "provider": "deepseek", "model": "deepseek-reasoner"},
+    {"label": "GPT-4.1", "provider": "openai", "model": "gpt-4.1-2025-04-14"},
+    {"label": "GPT-4o", "provider": "openai", "model": "gpt-4o-2024-11-20"},
+    {"label": "GPT-4o Mini", "provider": "openai", "model": "gpt-4o-mini"},
+    {"label": "Claude Sonnet 4", "provider": "anthropic", "model": "claude-sonnet-4-20250514"},
+    {"label": "Claude Opus 4", "provider": "anthropic", "model": "claude-opus-4-20250514"},
+    {"label": "Claude Haiku 3.5", "provider": "anthropic", "model": "claude-3-5-haiku-20241022"},
+    {"label": "Gemini 2.5 Pro", "provider": "google", "model": "gemini-2.5-pro-exp-03-25"},
+    {"label": "Gemini 2.5 Flash", "provider": "google", "model": "gemini-2.5-flash-preview-04-17"},
+    {"label": "Grok 3", "provider": "xai", "model": "grok-3"},
+    {"label": "Mistral Large", "provider": "mistral", "model": "mistral-large-2501"},
+    {"label": "Command R+", "provider": "cohere", "model": "command-r-plus"},
+    {"label": "Sonar Pro", "provider": "perplexity", "model": "sonar-pro"},
+    {"label": "Llama 3.3 70B (Groq)", "provider": "groq", "model": "llama-3.3-70b-versatile"},
+    {"label": "DeepSeek R1 (Groq)", "provider": "groq", "model": "deepseek-r1-distill-llama-70b"},
+]
+
 
 # ── Routes ─────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": "1.0"}
+
+
+@app.post("/auth/login")
+async def login(req: LoginRequest):
+    if req.backend_key != BACKEND_KEY:
+        raise HTTPException(403, "Invalid backend key")
+    users = _load_users()
+    user_id = f"user_{secrets.token_hex(8)}"
+    token = secrets.token_hex(32)
+    users[user_id] = {"token": token, "created": True}
+    _save_users(users)
+    return {"token": token, "user_id": user_id}
+
+
+@app.get("/models")
+async def list_models(authorization: Optional[str] = Header(None)):
+    _verify_token(authorization)
+    return {"models": AVAILABLE_MODELS}
 
 
 @app.post("/generate")
-async def generate(req: GenerateRequest):
+async def generate(req: GenerateRequest, authorization: Optional[str] = Header(None)):
+    _verify_token(authorization)
     provider = req.provider
     api_key = req.api_key
     model = req.model or "deepseek-chat"

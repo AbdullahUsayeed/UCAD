@@ -389,6 +389,20 @@ class AISidebar(QtWidgets.QDialog):
         self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self._model_combo.currentIndexChanged.connect(self._on_model_changed)
         hdr.addStretch()
+        # Connection status + login
+        self._status_dot = QtWidgets.QLabel("●")
+        self._status_dot.setToolTip("Backend: disconnected")
+        self._status_dot.setStyleSheet("color:#ff4444;font-size:12px;padding:0 4px;")
+        hdr.addWidget(self._status_dot)
+        self._login_btn = QtWidgets.QPushButton("🔑")
+        self._login_btn.setToolTip("Login to Railway backend")
+        self._login_btn.setFixedSize(26, 24)
+        self._login_btn.setStyleSheet("""
+            QPushButton { background:#121c2c; color:#9eb3cb; border:1px solid #2e3e56; border-radius:8px; font-size:11px; }
+            QPushButton:hover { background:#17263a; color:#e6f0fc; border-color:#63a5ff; }
+        """)
+        self._login_btn.clicked.connect(self._show_login_dialog)
+        hdr.addWidget(self._login_btn)
         # Header action buttons
         for tip, icon, cb in [("New Chat", "✚", self._new_chat), ("Settings", "⚙", self.sets), ("Stop", "✕", self.stop)]:
             b = QtWidgets.QPushButton(icon)
@@ -696,6 +710,7 @@ class AISidebar(QtWidgets.QDialog):
         self._populate_model_combo(provider)
         self.c_model = self._current_model_entry().get("model", "")
         self._rebuild()
+        self._update_connection_status()
         self.msg("System", f"Provider: **{self._pretty_provider(provider)}**")
 
     def _on_model_changed(self, _idx):
@@ -712,6 +727,11 @@ class AISidebar(QtWidgets.QDialog):
         self.api_key = cfg.get("api_key", "")
         self.c_model = cfg.get("model", "")
         self.c_url = cfg.get("url", "")
+        self.backend_key = cfg.get("backend_key", "")
+        self.auth_token = cfg.get("auth_token", "")
+        if self.auth_token:
+            from orchestrator import BackendAdapter
+            BackendAdapter.set_auth_token(self.auth_token)
 
         selected_provider = cfg.get("provider", "")
         if not selected_provider:
@@ -738,7 +758,9 @@ class AISidebar(QtWidgets.QDialog):
         cfg = {"api_key":key,"provider":prov,"model":model,"url":url,
                "provider_label": self._provider_combo.currentText(),
                "model_label": self._current_model_entry().get("label", self._model_combo.currentText()),
-               "mode": self._mode_combo.currentText()}
+               "mode": self._mode_combo.currentText(),
+               "backend_key": getattr(self, 'backend_key', ''),
+               "auth_token": getattr(self, 'auth_token', '')}
         with open(os.path.join(os.path.dirname(__file__),"config.json"),'w') as f:
             json.dump(cfg, f)
         self.api_key = key
@@ -746,7 +768,99 @@ class AISidebar(QtWidgets.QDialog):
         self.c_url = url
         self._rebuild()
         self.msg("System","✅ Settings saved!")
+        self._update_connection_status()
     
+    def _update_connection_status(self):
+        """Update the status dot color based on backend connection state."""
+        prov = self._current_provider()
+        if prov != "backend" or not self.c_url:
+            self._status_dot.setStyleSheet("color:#666666;font-size:12px;padding:0 4px;")
+            self._status_dot.setToolTip("Backend not configured")
+            return
+        if getattr(self, 'auth_token', ''):
+            self._status_dot.setStyleSheet("color:#44ff44;font-size:12px;padding:0 4px;")
+            self._status_dot.setToolTip(f"Backend: connected to {self.c_url}")
+        else:
+            self._status_dot.setStyleSheet("color:#ff4444;font-size:12px;padding:0 4px;")
+            self._status_dot.setToolTip("Backend: not logged in (click 🔑)")
+
+    def _show_login_dialog(self):
+        """Dialog to configure backend URL + backend key and get auth token."""
+        d = QtWidgets.QDialog(self)
+        d.setWindowTitle("Backend Login")
+        d.setMinimumWidth(420)
+        d.setStyleSheet("""
+            QDialog { background:#0d1625; color:#e6edf3; }
+            QLabel { color:#c8d6e8; font-size:12px; }
+            QLineEdit { background:#121c2c; color:#e8f0f9; border:1px solid #2e3e56;
+                        border-radius:6px; padding:6px 10px; font-size:12px; }
+            QLineEdit:focus { border-color:#63a5ff; }
+            QPushButton { background:#1e3a5f; color:#e6f0fc; border:none;
+                          border-radius:8px; padding:8px 20px; font-size:12px; font-weight:600; }
+            QPushButton:hover { background:#2a4d7a; }
+        """)
+        l = QtWidgets.QVBoxLayout(d)
+        l.setSpacing(10)
+
+        title = QtWidgets.QLabel("<b>Connect to Railway Backend</b>")
+        title.setStyleSheet("font-size:14px;color:#e6edf3;")
+        l.addWidget(title)
+
+        l.addWidget(QtWidgets.QLabel("Backend URL"))
+        url_inp = QtWidgets.QLineEdit()
+        url_inp.setText(getattr(self, 'c_url', ''))
+        url_inp.setPlaceholderText("https://your-app.railway.app")
+        l.addWidget(url_inp)
+
+        l.addWidget(QtWidgets.QLabel("Backend Key"))
+        key_inp = QtWidgets.QLineEdit()
+        key_inp.setEchoMode(QtWidgets.QLineEdit.Password)
+        key_inp.setText(getattr(self, 'backend_key', ''))
+        key_inp.setPlaceholderText("Enter your Railway backend key")
+        l.addWidget(key_inp)
+
+        info = QtWidgets.QLabel("The backend key is shared with your Railway backend deployment (set via BACKEND_KEY env var).")
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#7f93ad;font-size:11px;")
+        l.addWidget(info)
+
+        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+
+        def _do_login():
+            url = url_inp.text().strip().rstrip("/")
+            bkey = key_inp.text().strip()
+            if not url or not bkey:
+                QtWidgets.QMessageBox.warning(d, "Missing Info", "Both URL and backend key are required.")
+                return
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    f"{url}/auth/login",
+                    data=json.dumps({"backend_key": bkey}).encode(),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode())
+                token = data.get("token", "")
+                if not token:
+                    raise Exception("No token in response")
+                self.auth_token = token
+                self.backend_key = bkey
+                self.c_url = url
+                from orchestrator import BackendAdapter
+                BackendAdapter.set_auth_token(token)
+                self.save(self.api_key, self._current_provider(), model=self.c_model, url=url)
+                self._update_connection_status()
+                self.msg("System", f"✅ Connected to backend at {url}")
+                d.accept()
+            except Exception as e:
+                QtWidgets.QMessageBox.critical(d, "Login Failed", f"Could not connect to backend:\n{e}")
+
+        btns.accepted.connect(_do_login)
+        btns.rejected.connect(d.reject)
+        l.addWidget(btns)
+        d.exec_()
+
     def _rebuild(self):
         prov = self._current_provider()
         entry = self._current_model_entry()
@@ -757,6 +871,9 @@ class AISidebar(QtWidgets.QDialog):
             model=mdl,
             api_url=self.c_url if self.c_url else None
         )
+        if prov == "backend" and getattr(self, 'auth_token', ''):
+            from orchestrator import BackendAdapter
+            BackendAdapter.set_auth_token(self.auth_token)
         if hasattr(self, '_pcb_widget') and self._pcb_widget:
             self._pcb_widget.set_orch(self.orch)
             if self._pcb_widget._board_data:
@@ -1438,6 +1555,7 @@ def show_sidebar():
     if si is None: si=AISidebar()
     si.show()
     si.raise_()
+    si._update_connection_status()
     # Ensure FreeCAD's native Combo View (left panel with Model/Tasks tabs) is visible
     try:
         mw = FreeCADGui.getMainWindow()
