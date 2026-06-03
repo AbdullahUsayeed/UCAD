@@ -1182,7 +1182,8 @@ class AIOrchestrator(QtCore.QObject):
         try:
             doc = FreeCAD.ActiveDocument
             self.assembly = AssemblyGraph(doc) if doc else None
-        except Exception:
+        except Exception as ex:
+            print(f"[AI] Failed to init AssemblyGraph: {ex}")
             self.assembly = None
         self._backend_auth_token = os.environ.get("BACKEND_AUTH_TOKEN", "")
         if self.provider == "backend" and self._backend_auth_token:
@@ -1626,14 +1627,18 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
                         lines.append(f"  {name}: {', '.join(dims)}")
             # Append assembly constraints
             try:
-                self.assembly = AssemblyGraph(doc) if doc else None
-                if self.assembly:
-                    desc = self.assembly.describe()
-                    if desc:
-                        lines.append("")
-                        lines.append(desc)
-            except Exception:
-                pass
+                if doc:
+                    if self.assembly is not None:
+                        self.assembly.rebuild()
+                    else:
+                        self.assembly = AssemblyGraph(doc)
+                    if self.assembly._ready:
+                        desc = self.assembly.describe()
+                        if desc:
+                            lines.append("")
+                            lines.append(desc)
+            except Exception as ex:
+                print(f"[AI] AssemblyGraph describe failed: {ex}")
             return "\n".join(lines)
         except Exception:
             return ""
@@ -2417,10 +2422,15 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
 
             # Assembly constraint violation check
             try:
-                self.assembly = AssemblyGraph(doc) if doc else None
-            except Exception:
+                if doc:
+                    if self.assembly is not None:
+                        self.assembly.rebuild()
+                    else:
+                        self.assembly = AssemblyGraph(doc)
+            except Exception as ex:
+                print(f"[AI] AssemblyGraph verify rebuild failed: {ex}")
                 self.assembly = None
-            assembly_issues = self.assembly.verify() if self.assembly else []
+            assembly_issues = self.assembly.verify() if self.assembly and self.assembly._ready else []
 
             # Build diagnosis
             diagnosis_parts = []
@@ -2914,12 +2924,16 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             # Include assembly constraint snapshot
             try:
                 if doc:
-                    asm = AssemblyGraph(doc)
-                    asm_snap = asm.snapshot()
-                    if asm_snap:
-                        snap["__assembly__"] = asm_snap
-            except Exception:
-                pass
+                    if self.assembly is not None:
+                        self.assembly.rebuild()
+                    else:
+                        self.assembly = AssemblyGraph(doc)
+                    if self.assembly._ready:
+                        asm_snap = self.assembly.snapshot()
+                        if asm_snap:
+                            snap["__assembly__"] = asm_snap
+            except Exception as ex:
+                print(f"[AI] AssemblyGraph snapshot failed: {ex}")
             return snap
         except Exception:
             return {}

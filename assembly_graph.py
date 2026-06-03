@@ -47,8 +47,22 @@ class AssemblyGraph:
         self.doc = doc
         self.edges: list[AssemblyGraph.Edge] = []
         self._used_doc_name = doc.Name if doc else ""
+        self._ready = False
         if doc:
             self._scan()
+            self._ready = True
+
+    def rebuild(self):
+        """Re-scan the document. Call before each execution. Safe if doc is None."""
+        self.edges.clear()
+        self._ready = False
+        try:
+            self.doc = FreeCAD.ActiveDocument
+        except Exception:
+            self.doc = None
+        if self.doc:
+            self._scan()
+            self._ready = True
 
     # ── Scan ───────────────────────────────────────────────
     def _scan(self):
