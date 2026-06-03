@@ -1567,12 +1567,15 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
     ### OUTPUT FORMAT:
     Brief analysis (1-2 lines max), then complete ```python code block(s)."""
 
-    def build_dependency_chain_context(self):
+    def build_dependency_chain_context(self, user_input=""):
         """Build a DEPENDENCY CHAIN section for the AI prompt.
         
         Scans the active document for objects that form feature chains
         (via InList/OutList/Body.Group) and lists them so the AI knows
         exactly which objects must be updated together.
+        
+        If user_input is provided, also injects CONSTRAINTS AT RISK
+        for any body name that matches text in the input.
         """
         try:
             doc = FreeCAD.ActiveDocument
@@ -1637,6 +1640,17 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
                         if desc:
                             lines.append("")
                             lines.append(desc)
+                        # Inject CONSTRAINTS AT RISK if user_input mentions a body
+                        if user_input:
+                            ul = user_input.lower()
+                            for e in self.assembly.edges:
+                                for name in (e.source, e.target):
+                                    if name.lower() in ul:
+                                        affected = self.assembly.describe_affected(name)
+                                        if affected:
+                                            lines.append("")
+                                            lines.append(affected)
+                                        break
             except Exception as ex:
                 print(f"[AI] AssemblyGraph describe failed: {ex}")
             return "\n".join(lines)
@@ -2033,7 +2047,7 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             f"If anything in the history or prior observation differs, the current scene is correct.\n"
         )
         # Inject dependency chain so AI knows which objects must be updated together
-        dep_chain = self.build_dependency_chain_context()
+        dep_chain = self.build_dependency_chain_context(user_input=user_input)
         if dep_chain:
             prompt += f"\n{dep_chain}\n"
         
@@ -2078,7 +2092,7 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
         context_msg = {"role":"system","content":f"{role_label.get(mode, role_label['build'])}\n\n{instruction}"}
         user_prompt = self.build_user_prompt(user_input)
         if mode in ("build", "plan"):
-            dep_chain = self.build_dependency_chain_context()
+            dep_chain = self.build_dependency_chain_context(user_input=user_input)
             if dep_chain:
                 user_prompt += f"\n\n{dep_chain}"
         user_msg = {"role":"user","content":user_prompt}

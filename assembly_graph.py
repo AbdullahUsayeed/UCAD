@@ -229,3 +229,47 @@ class AssemblyGraph:
                 except Exception:
                     pass
         return snap
+
+    # ── Impact analysis ────────────────────────────────────
+    def affected_constraints(self, body_name: str, max_depth: int = 3) -> list[tuple]:
+        """BFS from body_name across constraint edges.
+        
+        Returns list of (constraint_desc, connected_body, constraint_type, depth).
+        Used to inject 'CONSTRAINTS AT RISK' into the AI prompt before execution.
+        """
+        visited_bodies = {body_name}
+        visited_edges: set[int] = set()
+        queue: list[tuple[str, int]] = [(body_name, 0)]
+        results: list[tuple[str, str, str, int]] = []
+
+        while queue:
+            current, depth = queue.pop(0)
+            if depth >= max_depth:
+                continue
+            for idx, edge in enumerate(self.edges):
+                if idx in visited_edges:
+                    continue
+                neighbor = None
+                if edge.source == current:
+                    neighbor = edge.target
+                elif edge.target == current:
+                    neighbor = edge.source
+                if neighbor is None:
+                    continue
+                visited_edges.add(idx)
+                results.append((edge.describe(), neighbor, edge.type, depth + 1))
+                if neighbor not in visited_bodies:
+                    visited_bodies.add(neighbor)
+                    queue.append((neighbor, depth + 1))
+        return results
+
+    def describe_affected(self, body_name: str, max_depth: int = 3) -> str:
+        """Formatted CONSTRAINTS AT RISK section for the AI prompt."""
+        hits = self.affected_constraints(body_name, max_depth)
+        if not hits:
+            return ""
+        lines = [f"### CONSTRAINTS AT RISK (via {body_name}):"]
+        for desc, neighbor, ctype, depth in hits:
+            marker = "⚠️" if depth == 1 else "  ⚡"
+            lines.append(f"  {marker} {desc}")
+        return "\n".join(lines)
