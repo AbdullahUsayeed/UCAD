@@ -92,6 +92,21 @@ Follow this order for robust parametric models:
 
 Always prefer PartDesign workflow (Body → Sketch → Pad) over standalone Part primitives for parametric designs. Use Part primitives only for simple standalone shapes that don't need sketches.
 
+### TECH DRAW DRAWING GENERATOR (read-only, no import needed)
+DrawingGenerator is already available. Call it directly:
+```python
+dg = DrawingGenerator()
+ok, msg = dg.create_page(body_names=["Body", "Lid"],
+                          views=["top", "front", "right", "isometric"],
+                          scale=1.0, page_label="MyDrawing")
+if ok:
+    dg.add_dimension(view_obj, edge_index=0, dim_type="Distance")
+```
+- `views`: "top","front","rear","left","right","isometric"
+- `dim_type`: "Distance","Length","Radius","Diameter"
+- DrawingGenerator is READ-ONLY — it never modifies geometry
+- No import needed — it's already in scope
+
 ### Part Primitives (Part::*)
 | Type | Properties | Example |
 |------|-----------|---------|
@@ -2989,12 +3004,13 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
         old_counts = self._count_objects()
         available = {}
         for mod_name in ["Part", "Sketcher", "Mesh", "Draft", "Import", "Export",
-                         "SheetMetal", "Fasteners", "Assembly"]:
+                         "SheetMetal", "Fasteners", "Assembly", "TechDraw"]:
             try:
                 available[mod_name] = __import__(mod_name)
             except Exception:
                 pass
         from enclosure_builder import EnclosureBuilder
+        from drawing_generator import DrawingGenerator
 
         def resolve_obj(name_or_label, doc=None):
             """Find object by exact name/label, case-insensitive match, or type fallback."""
@@ -3019,6 +3035,7 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             "doc": FreeCAD.ActiveDocument, "math": math,
             "find": resolve_obj,
             "EnclosureBuilder": EnclosureBuilder,
+            "DrawingGenerator": DrawingGenerator,
             "board_data": self._board_context,
             **available,
             "doc_name": FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else None,
