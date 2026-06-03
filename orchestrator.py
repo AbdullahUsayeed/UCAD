@@ -3017,6 +3017,36 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
         except Exception:
             return {}
 
+    def _save_checkpoint(self):
+        """Save a timestamped copy of the active document before AI execution.
+        
+        Creates checkpoint files in <tempdir>/aifc_checkpoints/.
+        Keeps the last 5 checkpoints per document to avoid unbounded disk use.
+        This is the last line of defense against C++ segfaults inside FreeCAD
+        that bypass Python's exception handling entirely.
+        """
+        import tempfile, os, glob, time
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return
+            ck_dir = os.path.join(tempfile.gettempdir(), "aifc_checkpoints")
+            os.makedirs(ck_dir, exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (doc.Label or doc.Name))
+            path = os.path.join(ck_dir, f"{safe_name}_{ts}.FCStd")
+            doc.saveCopy(path)
+            # Keep only the 5 most recent checkpoints for this document
+            prefix = os.path.join(ck_dir, f"{safe_name}_")
+            existing = sorted((p for p in glob.glob(prefix + "*.FCStd")), reverse=True)
+            for old in existing[5:]:
+                try:
+                    os.remove(old)
+                except Exception:
+                    pass
+        except Exception as ex:
+            print(f"[AI] Checkpoint save failed (non-fatal): {ex}")
+
     def execute_code(self, code, user_input=""):
         # Pre-execution syntax and runtime-risk validation
         valid, msg = self.validate_code(code)
@@ -3039,6 +3069,7 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             return False, dim_warn
         self._touched_objects = set()
         self._pre_execution_snapshot = self._capture_dimension_snapshot()
+        self._save_checkpoint()
 
         old_doc_names = set(FreeCAD.listDocuments().keys())
         old_doc_name = FreeCAD.ActiveDocument.Name if FreeCAD.ActiveDocument else None
