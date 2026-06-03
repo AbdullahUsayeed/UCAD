@@ -858,12 +858,15 @@ class AnthropicAdapter(ProviderAdapterBase):
         return response_json.get("content", [{}])[0].get("text", "")
 
 class BackendAdapter(ProviderAdapterBase):
-    """Proxies to Railway backend instead of calling provider directly."""
+    """Proxies to Railway backend instead of calling provider directly.
+    The api_url should be the base Railway URL (e.g. http://localhost:8000).
+    The adapter appends /generate to reach the generation endpoint."""
     _auth_token: str = ""
     @classmethod
     def set_auth_token(cls, token: str):
         cls._auth_token = token
     def build_request(self, model, messages, api_key=None, api_url=None):
+        url = (api_url or "").rstrip("/") + "/generate"
         body = {
             "messages": messages,
             "api_key": api_key or "",
@@ -874,7 +877,7 @@ class BackendAdapter(ProviderAdapterBase):
         headers = {"Content-Type": "application/json"}
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
-        return {"url": api_url, "data": json.dumps(body).encode(), "headers": headers}
+        return {"url": url, "data": json.dumps(body).encode(), "headers": headers}
     def parse_response(self, response_json):
         return response_json.get("content", "")
 
@@ -2042,10 +2045,9 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             return True, ""
 
         CRASH_STRINGS = [
-            "Part::Loft", "Part::Sweep", "Part::Thickness",
-            "Part::Offset", "Part::Section", "Part::Fillet",
-            "Part::Chamfer", ".makeBSpline", "Part.BSplineCurve",
-            "Part.BSplineSurface",
+            "Part::Thickness", "Part::Offset",
+            "Part.BSplineCurve", "Part.BSplineSurface",
+            ".makeBSpline",
         ]
         found = []
         for s in CRASH_STRINGS:
@@ -2056,7 +2058,7 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             return False, (
                 "Safety guard blocked execution because these crash-prone operations "
                 f"were detected: {', '.join(found)}. "
-                "These operations (Loft, Sweep, Thickness, BSplineCurve, etc.) can segfault "
+                "These operations (Thickness, Offset, BSplineCurve) can segfault "
                 "FreeCAD with invalid parameters. Ask the user to explicitly confirm with "
                 "'YES I understand the crash risk' before generating this code."
             )

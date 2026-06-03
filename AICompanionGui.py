@@ -591,7 +591,7 @@ class AISidebar(QtWidgets.QDialog):
         self._cancel_plan_btn.setFixedHeight(22)
         self._cancel_plan_btn.setStyleSheet(_plan_btn_style)
         self._cancel_plan_btn.setVisible(False)
-        self._cancel_plan_btn.clicked.connect(lambda: (self.stop(), self._finish(), self.msg("System", "❌ Plan cancelled.")))
+        self._cancel_plan_btn.clicked.connect(lambda: (self.stop(), self._finish(), self.msg("System", "❌ Plan cancelled.", chat=True)))
         bar.addWidget(self._cancel_plan_btn)
 
         bar.addStretch()
@@ -879,19 +879,26 @@ class AISidebar(QtWidgets.QDialog):
             if self._pcb_widget._board_data:
                 self.orch._board_context = self._pcb_widget._board_data
     
-    def msg(self, s, t):
+    def msg(self, s, t, chat=False):
         import html as htmlmod
-        if s == "System":
+        if s == "System" and not chat:
             # Keep UI noise low: route system notes to status line instead of chat bubbles
             plain = re.sub(r"\*\*(.*?)\*\*", r"\1", str(t or "")).replace("\n", " ").strip()
             if plain:
                 self._status_text.setText(plain[:120])
             return
-        text_html = htmlmod.escape(t)
+        text_html = htmlmod.escape(str(t or ""))
         text_html = text_html.replace("\n", "<br>")
         text_html = re.sub(r'`([^`]+)`', r'<code style="background:#132235;color:#9dd0ff;padding:2px 6px;border:1px solid #2f4562;border-radius:5px;font-family:Consolas,monospace;font-size:12px;">\1</code>', text_html)
 
-        if s == "Error":
+        if s == "System":
+            block = (
+                f'<div style="margin:6px 0;display:flex;justify-content:center;">'
+                f'<div style="background:#1a2332;border:1px solid #2c4058;border-radius:14px;padding:6px 14px;max-width:90%;">'
+                f'<div style="color:#b0c8e0;font-size:12px;line-height:1.5;text-align:center;">{text_html}</div>'
+                f'</div></div>'
+            )
+        elif s == "Error":
             block = (
                 f'<div style="margin:10px 0;display:flex;justify-content:flex-start;">'
                 f'<div style="background:#311b20;border:1px solid #7a303d;border-left:4px solid #ef6b73;border-radius:10px;padding:10px 12px;max-width:95%;">'
@@ -906,7 +913,7 @@ class AISidebar(QtWidgets.QDialog):
                 f'<div style="color:#f3f9ff;font-size:13px;line-height:1.55;">{text_html}</div>'
                 f'</div></div>'
             )
-        elif s == "AI":
+        else:
             block = (
                 f'<div style="margin:8px 0;display:flex;justify-content:flex-start;">'
                 f'<div style="background:#121f30;border:1px solid #32465e;border-radius:10px;padding:8px 11px;max-width:92%;">'
@@ -914,8 +921,6 @@ class AISidebar(QtWidgets.QDialog):
                 f'</div>'
                 f'</div>'
             )
-        else:
-            block = f'<div style="margin:6px 0;color:#9cb1c9;font-size:12px;">{text_html}</div>'
 
         if self._mascot.isVisible():
             self._mascot.hide()
@@ -1242,6 +1247,7 @@ class AISidebar(QtWidgets.QDialog):
         self.spin.setVisible(True)
         self._set_dot("#f7c96a")
         self._status_text.setText("🤔 Thinking..."); self._status_text.setStyleSheet("color:#f7c96a;font-size:11px;font-weight:500;")
+        self.msg("System", "🤔 Thinking...", chat=True)
         self._retries = 0
         self._step_retry_state = None
         # "execute" confirmation for plan mode — use the stored plan steps
@@ -1254,7 +1260,7 @@ class AISidebar(QtWidgets.QDialog):
             self._mode_combo.setCurrentText("build")
             self._stop_step_btn.setVisible(True)
             self._cancel_plan_btn.setVisible(True)
-            self.msg("System", "▶️ Executing plan...")
+            self.msg("System", "▶️ Executing plan...", chat=True)
             if self._plan_steps:
                 self._plan_step_idx = 0
                 self.orch.reset_observation_tracker()
@@ -1285,7 +1291,7 @@ class AISidebar(QtWidgets.QDialog):
                     fresh_obs, fresh_ctx,
                     prior_observation="(plan resumed after API interruption)"
                 )
-                self.msg("System", f"▶️ Resuming plan at step {step_idx+1}")
+                self.msg("System", f"▶️ Resuming plan at step {step_idx+1}", chat=True)
                 self._launch_worker(msgs, original_request)
                 return
         self._pending_input = ""
@@ -1326,11 +1332,11 @@ class AISidebar(QtWidgets.QDialog):
             # Ignore stale responses from older workers
             if gen != 0 and gen != self._worker_gen:
                 return
-            # Show AI reasoning as a subtle system label (not a chat bubble)
-            if raw_text:
+            # Show AI reasoning in chat
+            if raw_text and code:
                 thinking = self.orch.extract_thinking(raw_text)
                 if thinking:
-                    self.msg("System", f"💭 {thinking[:200]}")
+                    self.msg("System", f"💭 {thinking[:500]}", chat=True)
 
             # Plan mode — extract plan and pause
             if self._mode == "plan":
@@ -1338,8 +1344,8 @@ class AISidebar(QtWidgets.QDialog):
                 self._plan_steps = self.orch.extract_plan(plan_source)
                 if self._plan_steps:
                     plan_text = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(self._plan_steps))
-                    self.msg("System", f"📋 Plan:\n{plan_text}")
-                    self.msg("System", "Send **execute** or **go ahead** to run this plan.")
+                    self.msg("System", f"📋 Plan:\n{plan_text}", chat=True)
+                    self.msg("System", "Send **execute** or **go ahead** to run this plan.", chat=True)
                     self._plan_paused = True
                     self._pending_input = self._pending_input or raw_text
                 self._finish()
@@ -1377,6 +1383,7 @@ class AISidebar(QtWidgets.QDialog):
 
             if not success and self._retries < MAX_RETRIES:
                 self._retries += 1
+                self.msg("System", f"🔄 Retry {self._retries}/{MAX_RETRIES}: {message[:200]}", chat=True)
                 fresh_obs = self.orch.capture_observation()
                 ctx = self.orch.build_messages(self._pending_input,
                     mode="build",
@@ -1395,7 +1402,7 @@ class AISidebar(QtWidgets.QDialog):
             # Success — observe and decide next action
             obs = self.orch.capture_observation()
             step_label = f"Step {self._plan_step_idx}" if self._plan_steps else ""
-            self.msg("System", f"✅ {step_label} {message} {obs or ''}".strip())
+            self.msg("System", f"✅ {step_label} {message} {obs or ''}".strip(), chat=True)
             self.show_code(combined_code)
             if hasattr(self, 'tree') and self.tree:
                 self.tree.refresh()
@@ -1422,9 +1429,9 @@ class AISidebar(QtWidgets.QDialog):
                         if new_steps and len(new_steps) >= 1:
                             self._plan_steps = self._plan_steps[:self._plan_step_idx] + new_steps
                             plan_text = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(new_steps))
-                            self.msg("System", f"🔄 Plan revised for remaining steps:\n{plan_text}")
+                            self.msg("System", f"🔄 Plan revised for remaining steps:\n{plan_text}", chat=True)
                         else:
-                            self.msg("System", f"🔄 Plan revised: {replan_text[:200]}")
+                            self.msg("System", f"🔄 Plan revised: {replan_text[:200]}", chat=True)
 
             if self._plan_steps and self._plan_step_idx < len(self._plan_steps):
                 self._request_next_step(obs)
@@ -1461,7 +1468,7 @@ class AISidebar(QtWidgets.QDialog):
         if self._code_worker is not None or (self._worker_thread and self._worker_thread.isRunning()):
             self._on_stop_step()
         self._mode = new_mode
-        self.msg("System", f"Mode: **{new_mode}**")
+        self.msg("System", f"Mode: **{new_mode}**", chat=True)
         if new_mode == "pcb":
             self._inp_container.setVisible(False)
             self._pcb_widget.setVisible(True)
@@ -1474,12 +1481,14 @@ class AISidebar(QtWidgets.QDialog):
             if new_mode == "build":
                 self.msg("System",
                     f"Plan paused at step {self._plan_step_idx+1}/{len(self._plan_steps)} — "
-                    f"send any message to resume."
+                    f"send any message to resume.",
+                    chat=True
                 )
             else:
                 self.msg("System",
                     f"⏸️ Plan paused at step {self._plan_step_idx+1}/{len(self._plan_steps)} — "
-                    f"switch back to **Build** mode to resume."
+                    f"switch back to **Build** mode to resume.",
+                    chat=True
                 )
 
     def _on_pcb_generate(self, params):
@@ -1509,10 +1518,11 @@ class AISidebar(QtWidgets.QDialog):
             self._plan_paused = True
             self.msg("System",
                 f"⏸️ Step {self._plan_step_idx+1}/{len(self._plan_steps)} stopped. "
-                f"Send any message to resume."
+                f"Send any message to resume.",
+                chat=True
             )
         else:
-            self.msg("System", "⏸️ Operation stopped.")
+            self.msg("System", "⏸️ Operation stopped.", chat=True)
     
     def _on_worker_err(self, e, gen=0):
         if self._abandoned:
@@ -1523,7 +1533,8 @@ class AISidebar(QtWidgets.QDialog):
             self._plan_paused = True
             self.msg("System",
                 f"⏸️ Plan paused at step {self._plan_step_idx+1}/{len(self._plan_steps)} "
-                f"due to API error. Send any message to resume."
+                f"due to API error. Send any message to resume.",
+                chat=True
             )
             self.spin.setVisible(False)
             self._worker_thread = None
