@@ -529,6 +529,31 @@ The user can click faces/edges/vertices in the 3D view and they get inserted as 
 7. Use obj.Label for display names. Keep names unique.
 8. Space objects 200-300mm apart.
 9. Color each new object distinctively via .ViewObject.ShapeColor
+
+### PART HELPER FUNCTIONS (use these to write cleaner code):
+Define these at the top of your code block for compact geometry:
+```python
+def v(x,y,z): return FreeCAD.Vector(x,y,z)
+def box(lx,ly,lz, x=0,y=0,z=0): return Part.makeBox(lx,ly,lz, v(x,y,z))
+def cyl(r,h, x=0,y=0,z=0, ax=None): return Part.makeCylinder(r,h, v(x,y,z), ax or v(0,0,1))
+def tube(od,id_,h, x=0,y=0,z=0): return cyl(od/2,h,x,y,z).cut(cyl(id_/2, h+0.2, x,y,z-0.1))
+def fuse(*args):
+    flat=[]; [flat.extend(a) if isinstance(a,list) else flat.append(a) for a in args]
+    r=flat[0]
+    for s in flat[1:]: r=r.fuse(s)
+    return r
+def sub(base,*args):
+    r=base
+    for a in args:
+        if isinstance(a,list):
+            for s in a: r=r.cut(s)
+        else: r=r.cut(a)
+    return r
+```
+These let you write `box(100,60,40)` instead of `Part.makeBox(100,60,40, FreeCAD.Vector(0,0,0))`,
+and `fuse(obj, [list_of_parts])` instead of chaining `.fuse()` calls.
+For rounded-corner boxes use `EnclosureBuilder.rrect()` (import from enclosure_builder).
+For rotated boxes use `EnclosureBuilder.rotbox()`.
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -1469,7 +1494,18 @@ The compiler auto-closes rectangles and chains. After the JSON block, use ```pyt
 21. **DEPENDENCY GRAPH** — Before modifying any property, scan the document for objects
     that depend on your target (check `obj.InList` and `obj.OutList` to find the chain).
     The DEPENDENCY CHAIN section in your prompt lists the objects you must keep consistent.
-    Update ALL of them, not just the one the user mentioned by name."""
+    Update ALL of them, not just the one the user mentioned by name.
+22. **Z=0 ARCHITECTURE FOR ENCLOSURES** — Build all enclosure geometry at Z=0 local space:
+    - Outer shell and inner cavity both start at Z=0.
+    - Apply all cuts (bosses, vents, USB slots, holes) at Z=0 coordinates.
+    - Place/final-position objects only AFTER all boolean operations are done.
+    This eliminates every Z-offset arithmetic bug (cavity floating, cut missing, etc.).
+    The EnclosureBuilder methods follow this pattern automatically.
+23. **USE HELPER FUNCTIONS** — For compact geometry code, define and use the helpers
+    from the FREECAD API REFERENCE section (v, box, cyl, tube, fuse, sub). For
+    rounded-corner boxes use `EnclosureBuilder.rrect()`; for rotated boxes use
+    `EnclosureBuilder.rotbox()`. These produce cleaner, less error-prone code than
+    raw Part.makeBox / Part.makeCylinder calls."""
         mode_rules = {
             "plan": """### CURRENT MODE: PLAN
 Your job is to create a detailed numbered plan for the user's request.

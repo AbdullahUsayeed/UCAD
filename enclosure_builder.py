@@ -138,6 +138,62 @@ class EnclosureBuilder:
         self._add_to_doc("Lid", self.lid_shape)
         return self.lid_shape
 
+    # ── Shape Helpers (generic, usable standalone) ────────────
+    @staticmethod
+    def v(x, y, z):
+        return FreeCAD.Vector(x, y, z)
+
+    @staticmethod
+    def rrect(lx, ly, lz, r, x=0, y=0, z=0):
+        """Rounded-corner rectangular prism — stable cylinder-corner method."""
+        if r <= 0 or 2 * r >= lx or 2 * r >= ly:
+            return Part.makeBox(lx, ly, lz, FreeCAD.Vector(x, y, z))
+        r__ = r
+        c = Part.makeBox(lx - 2 * r__, ly - 2 * r__, lz, FreeCAD.Vector(x + r__, y + r__, z))
+        b = Part.makeBox(lx - 2 * r__, r__, lz, FreeCAD.Vector(x + r__, y, z))
+        t = Part.makeBox(lx - 2 * r__, r__, lz, FreeCAD.Vector(x + r__, y + ly - r__, z))
+        l = Part.makeBox(r__, ly - 2 * r__, lz, FreeCAD.Vector(x, y + r__, z))
+        R = Part.makeBox(r__, ly - 2 * r__, lz, FreeCAD.Vector(x + lx - r__, y + r__, z))
+        c1 = Part.makeCylinder(r__, lz, FreeCAD.Vector(x + r__, y + r__, z))
+        c2 = Part.makeCylinder(r__, lz, FreeCAD.Vector(x + lx - r__, y + r__, z))
+        c3 = Part.makeCylinder(r__, lz, FreeCAD.Vector(x + r__, y + ly - r__, z))
+        c4 = Part.makeCylinder(r__, lz, FreeCAD.Vector(x + lx - r__, y + ly - r__, z))
+        parts = [c, b, t, l, R, c1, c2, c3, c4]
+        result = parts[0]
+        for s in parts[1:]:
+            result = result.fuse(s)
+        return result
+
+    @staticmethod
+    def rslot(lx, ly, r, depth, x=0, y=0, z=0):
+        """Rounded-corner cut tool (slot/pocket with fillet corners)."""
+        r = min(r, lx / 2 - 0.05, ly / 2 - 0.05)
+        if r <= 0:
+            return Part.makeBox(lx, ly, depth, FreeCAD.Vector(x, y, z))
+        r__ = r
+        c = Part.makeBox(lx - 2 * r__, ly - 2 * r__, depth, FreeCAD.Vector(x + r__, y + r__, z))
+        b = Part.makeBox(lx - 2 * r__, r__, depth, FreeCAD.Vector(x + r__, y, z))
+        t = Part.makeBox(lx - 2 * r__, r__, depth, FreeCAD.Vector(x + r__, y + ly - r__, z))
+        l = Part.makeBox(r__, ly - 2 * r__, depth, FreeCAD.Vector(x, y + r__, z))
+        R = Part.makeBox(r__, ly - 2 * r__, depth, FreeCAD.Vector(x + lx - r__, y + r__, z))
+        c1 = Part.makeCylinder(r__, depth, FreeCAD.Vector(x + r__, y + r__, z))
+        c2 = Part.makeCylinder(r__, depth, FreeCAD.Vector(x + lx - r__, y + r__, z))
+        c3 = Part.makeCylinder(r__, depth, FreeCAD.Vector(x + r__, y + ly - r__, z))
+        c4 = Part.makeCylinder(r__, depth, FreeCAD.Vector(x + lx - r__, y + ly - r__, z))
+        result = c.fuse(b)
+        for s in [t, l, R, c1, c2, c3, c4]:
+            result = result.fuse(s)
+        return result
+
+    @staticmethod
+    def rotbox(lx, ly, lz, deg, cx, cy, z):
+        """Box rotated deg° in XY around its own center, base at z."""
+        b = Part.makeBox(lx, ly, lz, FreeCAD.Vector(-lx / 2, -ly / 2, 0))
+        b.rotate(FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 0, 1), deg)
+        b.translate(FreeCAD.Vector(cx, cy, z))
+        return b
+
+    # ── Placeholder features ────────────────────────────────
     def add_snap_fits(self, base, lid, count=4):
         pass
 
