@@ -2,6 +2,7 @@
 import FreeCAD, FreeCADGui
 import urllib.request, json, re, math, traceback, os, datetime, ast
 from compat import QtCore
+from assembly_graph import AssemblyGraph
 
 # ═══════════════════════════════════════════════════════════════
 #  FREECAD KNOWLEDGE BASE
@@ -1178,6 +1179,11 @@ class AIOrchestrator(QtCore.QObject):
         self._touched_objects = set()
         self.allow_expensive_fallback = True
         self._board_context = None
+        try:
+            doc = FreeCAD.ActiveDocument
+            self.assembly = AssemblyGraph(doc) if doc else None
+        except Exception:
+            self.assembly = None
         self._backend_auth_token = os.environ.get("BACKEND_AUTH_TOKEN", "")
         if self.provider == "backend" and self._backend_auth_token:
             BackendAdapter.set_auth_token(self._backend_auth_token)
@@ -1618,6 +1624,16 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
                             dims.append(f"{p}={v:.0f}")
                     if dims:
                         lines.append(f"  {name}: {', '.join(dims)}")
+            # Append assembly constraints
+            try:
+                self.assembly = AssemblyGraph(doc) if doc else None
+                if self.assembly:
+                    desc = self.assembly.describe()
+                    if desc:
+                        lines.append("")
+                        lines.append(desc)
+            except Exception:
+                pass
             return "\n".join(lines)
         except Exception:
             return ""
@@ -2399,6 +2415,13 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             # Geometry bounds check
             geo_issues = self._check_geometry_bounds(doc)
 
+            # Assembly constraint violation check
+            try:
+                self.assembly = AssemblyGraph(doc) if doc else None
+            except Exception:
+                self.assembly = None
+            assembly_issues = self.assembly.verify() if self.assembly else []
+
             # Build diagnosis
             diagnosis_parts = []
 
@@ -2443,6 +2466,11 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
             if geo_issues:
                 diagnosis_parts.append(
                     "Geometry inconsistency:\n- " + "\n- ".join(geo_issues[:4])
+                )
+
+            if assembly_issues:
+                diagnosis_parts.append(
+                    "Constraint violations:\n- " + "\n- ".join(assembly_issues[:4])
                 )
 
             if diagnosis_parts:
@@ -2883,6 +2911,15 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
                             pass
                 if props:
                     snap[key] = props
+            # Include assembly constraint snapshot
+            try:
+                if doc:
+                    asm = AssemblyGraph(doc)
+                    asm_snap = asm.snapshot()
+                    if asm_snap:
+                        snap["__assembly__"] = asm_snap
+            except Exception:
+                pass
             return snap
         except Exception:
             return {}
