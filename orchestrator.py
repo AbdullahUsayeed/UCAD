@@ -1128,7 +1128,6 @@ SAFE_BUILTINS = {
     "isinstance": isinstance, "hasattr": hasattr, "getattr": getattr,
     "setattr": setattr, "type": type, "super": super,
     "iter": iter, "next": next, "slice": slice,
-    "open": open,
     "Exception": Exception, "ValueError": ValueError,
     "TypeError": TypeError, "AttributeError": AttributeError,
     "KeyError": KeyError, "IndexError": IndexError,
