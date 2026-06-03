@@ -885,6 +885,34 @@ PROVIDERS = {
     "backend": {"url": "", "model": "deepseek|deepseek-chat", "auth": "Bearer"},
 }
 
+# ── Per-provider tuning ────────────────────────────────────
+# Different providers have different code generation behaviors.
+# Smaller/weaker models need more retries and different prompting.
+PROVIDER_TUNING = {
+    # provider : (max_retries, style_hint)
+    "deepseek":   (5, ""),
+    "openai":     (5, ""),
+    "ollama":     (8, "Be extra careful with ``` fence formatting — output the closing ``` on its own line."),
+    "anthropic":  (5, ""),
+    "google":     (5, ""),
+    "xai":        (6, ""),
+    "mistral":    (6, ""),
+    "cohere":     (6, ""),
+    "perplexity": (6, ""),
+    "groq":       (6, ""),
+    "openrouter": (5, ""),
+    "together":   (6, ""),
+    "fireworks":  (6, ""),
+    "github":     (5, ""),
+    "backend":    (5, ""),
+}
+
+def _provider_max_retries(provider):
+    return PROVIDER_TUNING.get(provider, (5, ""))[0]
+
+def _provider_style_hint(provider):
+    return PROVIDER_TUNING.get(provider, (5, ""))[1]
+
 # ── Provider adapters ─────────────────────────────────────
 
 class ProviderAdapterBase:
@@ -2170,6 +2198,10 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
                     "Wait for the user to provide specific numbers before generating any code."
                 )
                 context_msg["content"] += clarification
+        # Provider-specific style hint (e.g. weaker models need formatting reminders)
+        style_hint = _provider_style_hint(self.provider)
+        if style_hint:
+            context_msg["content"] += f"\n\n### PROVIDER NOTE\n{style_hint}"
         user_msg = {"role":"user","content":user_prompt}
         api_msgs = [context_msg, user_msg]
         if self.provider in ("openai",) and FreeCADGui.activeDocument():
@@ -3438,9 +3470,9 @@ FreeCAD.Gui.SendMsgToActiveView("ViewFit")"""
     def _diff_observation(self, prev, curr):
         """Diff two structured observations by stable UID (Document.Name.Object.Name).
         Returns (added, removed, modified) lists of {'uid': ..., 'summary': ...} dicts.
-        Modifications are detected by shape_hash (catches transient-object side effects)
-        and filtered to only include objects in self._touched_objects
-        (objects the AI's code actually created or changed, not recompute noise)."""
+        Modifications are detected by shape_hash — compares ALL common objects, not just
+        _touched_objects, so recompute cascades (Feature A changes → Feature B changes shape)
+        are captured automatically. Touched-object filtering is done at the call site."""
         prev_map = {o["uid"]: o for o in prev}
         curr_map = {o["uid"]: o for o in curr}
         prev_uids = set(prev_map.keys())

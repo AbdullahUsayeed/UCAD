@@ -2,7 +2,7 @@
 import FreeCAD, FreeCADGui
 from compat import QtWidgets, QtCore, QtGui, Qt, Signal
 import os, json, datetime, re
-from orchestrator import AIOrchestrator, TEMPLATES, MAX_RETRIES, PRESET_MODELS, MODES, PROVIDERS
+from orchestrator import AIOrchestrator, TEMPLATES, MAX_RETRIES, PRESET_MODELS, MODES, PROVIDERS, _provider_max_retries
 from pcb_mode import PcbInputWidget
 
 PROVIDER_HELP_URLS = {
@@ -1402,9 +1402,10 @@ class AISidebar(QtWidgets.QDialog):
             total_steps = len(self._plan_steps) if self._plan_steps else 1
             self._status_text.setText(f"⚡ Step {self._plan_step_idx + 1}/{total_steps}")
 
-            if not success and self._retries < MAX_RETRIES:
+            max_r = _provider_max_retries(self.orch.provider) if self.orch else MAX_RETRIES
+            if not success and self._retries < max_r:
                 self._retries += 1
-                self.msg("System", f"🔄 Retry {self._retries}/{MAX_RETRIES}: {message[:200]}", chat=True)
+                self.msg("System", f"🔄 Retry {self._retries}/{max_r}: {message[:200]}", chat=True)
                 fresh_obs = self.orch.capture_observation()
                 ctx = self.orch.build_messages(self._pending_input,
                     mode="build",
@@ -1428,8 +1429,9 @@ class AISidebar(QtWidgets.QDialog):
                         self._retries = 0
                         self._step_retry_state = None
                         step_num = self._plan_step_idx + 1
+                        bt_max = _provider_max_retries(self.orch.provider) if self.orch else MAX_RETRIES
                         self.msg("System",
-                            f"🔄 Step {step_num} failed after {MAX_RETRIES} attempts. "
+                            f"🔄 Step {step_num} failed after {bt_max} attempts. "
                             f"Rolled back to pre-step state. Proposing alternative approach.",
                             chat=True
                         )
@@ -1448,7 +1450,7 @@ class AISidebar(QtWidgets.QDialog):
                         return
                     except Exception as ex:
                         self.msg("Error", f"Backtrack restore failed: {ex}, falling back to hard failure.")
-                self.msg("Error", f"❌ Failed after {MAX_RETRIES} retries: {message}")
+                self.msg("Error", f"❌ Failed after {_provider_max_retries(self.orch.provider) if self.orch else MAX_RETRIES} retries: {message}")
                 self.orch.record_result(self._pending_input, combined_code, False, message, self._retries)
                 self._finish()
                 return
