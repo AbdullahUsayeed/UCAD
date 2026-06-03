@@ -1031,14 +1031,18 @@ class AISidebar(QtWidgets.QDialog):
         def refresh_provider_state():
             provider = pc.currentData() or "deepseek"
             fill_models(provider)
+            is_backend = provider == "backend"
+            url_label.setText("Railway Backend URL" if is_backend else "API URL (optional override)")
+            url_input.setPlaceholderText("https://your-app.railway.app" if is_backend else "Leave blank to use provider default")
             needs_key = self._provider_requires_key(provider)
             key_label.setText("API Key" + (" (required)" if needs_key else " (optional)"))
             req_hint.setText(
-                "This provider requires your own key." if needs_key else
-                "No key needed for this provider in most setups."
+                "Enter your actual AI provider key. Plugin sends it to backend, backend forwards to provider." if is_backend else
+                ("This provider requires your own key." if needs_key else
+                "No key needed for this provider in most setups.")
             )
             link = PROVIDER_HELP_URLS.get(provider, "")
-            if link:
+            if link and not is_backend:
                 help_link.setText(f'<a href="{link}">Get {self._pretty_provider(provider)} API key</a>')
                 help_link.setVisible(True)
             else:
@@ -1073,6 +1077,10 @@ class AISidebar(QtWidgets.QDialog):
             model_entry = mc.currentData() if isinstance(mc.currentData(), dict) else {"model": ""}
             model = custom_model_input.text().strip() or model_entry.get("model") or PROVIDERS.get(provider, {}).get("model", "")
             key = key_input.text().strip()
+            url = url_input.text().strip()
+            if provider == "backend" and not url:
+                QtWidgets.QMessageBox.warning(d, "Backend URL Required", "Please enter your Railway backend URL (e.g. https://your-app.railway.app).")
+                return
             if self._provider_requires_key(provider) and not key:
                 QtWidgets.QMessageBox.warning(d, "API Key Required", f"Please enter an API key for {self._pretty_provider(provider)}.")
                 return
@@ -1084,7 +1092,7 @@ class AISidebar(QtWidgets.QDialog):
             # Ensure model combo is repopulated for provider before selecting model
             self._populate_model_combo(provider, selected_model=model_entry.get("model"), selected_label=model_entry.get("label"))
 
-            self.save(key, provider, model=model, url=url_input.text().strip())
+            self.save(key, provider, model=model, url=url)
             d.accept()
 
         btns.accepted.connect(_accept)

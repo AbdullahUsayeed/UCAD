@@ -799,6 +799,7 @@ PROVIDERS = {
     "together": {"url": "https://api.together.xyz/v1/chat/completions", "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "auth": "Bearer"},
     "fireworks": {"url": "https://api.fireworks.ai/inference/v1/chat/completions", "model": "accounts/fireworks/models/llama-v3p3-70b-instruct", "auth": "Bearer"},
     "github": {"url": "https://models.inference.ai.azure.com/chat/completions", "model": "gpt-4o", "auth": "Bearer"},
+    "backend": {"url": "", "model": "deepseek|deepseek-chat", "auth": "Bearer"},
 }
 
 # ── Provider adapters ─────────────────────────────────────
@@ -856,6 +857,21 @@ class AnthropicAdapter(ProviderAdapterBase):
     def parse_response(self, response_json):
         return response_json.get("content", [{}])[0].get("text", "")
 
+class BackendAdapter(ProviderAdapterBase):
+    """Proxies to Railway backend instead of calling provider directly."""
+    def build_request(self, model, messages, api_key=None, api_url=None):
+        body = {
+            "messages": messages,
+            "api_key": api_key or "",
+            "provider": model.split("|")[0] if "|" in (model or "") else "deepseek",
+            "model": model.split("|")[1] if "|" in (model or "") else model,
+            "api_url": None,
+        }
+        headers = {"Content-Type": "application/json"}
+        return {"url": api_url, "data": json.dumps(body).encode(), "headers": headers}
+    def parse_response(self, response_json):
+        return response_json.get("content", "")
+
 class GoogleAdapter(ProviderAdapterBase):
     """Google Gemini API — key in URL, different request/response format."""
     def build_request(self, model, messages, api_key=None, api_url=None):
@@ -905,6 +921,7 @@ PROVIDER_ADAPTERS = {
     "together":   OpenAICompatibleAdapter(),
     "fireworks":  OpenAICompatibleAdapter(),
     "github":     OpenAICompatibleAdapter(),
+    "backend":    BackendAdapter(),
 }
 
 PRESET_MODELS = [
@@ -967,6 +984,11 @@ PRESET_MODELS = [
     ("[Ollama] CodeLlama (local)", "ollama", "codellama"),
     ("[Ollama] Qwen 2.5 (local)", "ollama", "qwen2.5"),
     ("[Ollama] DeepSeek Coder (local)", "ollama", "deepseek-coder"),
+    # ── Backend (Railway proxy) ──
+    ("[Backend] DeepSeek Flash", "backend", "deepseek|deepseek-chat"),
+    ("[Backend] GPT-4o Mini", "backend", "openai|gpt-4o-mini"),
+    ("[Backend] Claude Sonnet 4", "backend", "anthropic|claude-sonnet-4-20250514"),
+    ("[Backend] Gemini 2.5 Flash", "backend", "google|gemini-2.5-flash-preview-04-17"),
     # ── Templates ──
     ("Templates (no AI)", "templates", ""),
 ]
