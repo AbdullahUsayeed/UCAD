@@ -52,7 +52,7 @@ PROVIDER_URLS = {
     "google":     "https://generativelanguage.googleapis.com/v1beta/models/",
     "xai":        "https://api.x.ai/v1/chat/completions",
     "mistral":    "https://api.mistral.ai/v1/chat/completions",
-    "cohere":     "https://api.cohere.ai/v1/chat",
+    "cohere":     "https://api.cohere.com/v1/chat/completions",
     "perplexity": "https://api.perplexity.ai/chat/completions",
     "groq":       "https://api.groq.com/openai/v1/chat/completions",
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
@@ -81,7 +81,9 @@ class GenerateRequest(BaseModel):
 # ── Provider helpers ───────────────────────────────────────────
 
 def _build_openai_request(model: str, messages: list, api_key: str, api_url: str) -> tuple:
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     body = {"model": model, "messages": messages}
     return api_url, headers, body
 

@@ -45,7 +45,7 @@ class SketchCompiler:
                     x1, y1 = pts[i]
                     x2, y2 = pts[(i + 1) % 4]
                     lines.append(
-                        f"_geo.append(Part.LineSegment(App.Vector({x1},{y1},0), App.Vector({x2},{y2},0)))"
+                        f"_geo.append(Part.LineSegment(FreeCAD.Vector({x1},{y1},0), FreeCAD.Vector({x2},{y2},0)))"
                     )
                 g = geo_idx
                 for i in range(4):
@@ -63,7 +63,7 @@ class SketchCompiler:
             elif t == "circle":
                 cx, cy, r = prim["cx"], prim["cy"], prim["r"]
                 lines.append(
-                    f"_geo.append(Part.Circle(App.Vector({cx},{cy},0), App.Vector(0,0,1), {r}))"
+                    f"_geo.append(Part.Circle(FreeCAD.Vector({cx},{cy},0), FreeCAD.Vector(0,0,1), {r}))"
                 )
                 lines.append(
                     f"_con.append(Sketcher.Constraint('Radius', {geo_idx}, {r}))"
@@ -74,7 +74,7 @@ class SketchCompiler:
             elif t == "line":
                 x1, y1, x2, y2 = prim["x1"], prim["y1"], prim["x2"], prim["y2"]
                 lines.append(
-                    f"_geo.append(Part.LineSegment(App.Vector({x1},{y1},0), App.Vector({x2},{y2},0)))"
+                    f"_geo.append(Part.LineSegment(FreeCAD.Vector({x1},{y1},0), FreeCAD.Vector({x2},{y2},0)))"
                 )
                 if prev_end is not None and abs(prev_end[0] - x1) < 1e-6 and abs(prev_end[1] - y1) < 1e-6:
                     lines.append(
@@ -90,7 +90,7 @@ class SketchCompiler:
                     x1, y1 = pts[i]
                     x2, y2 = pts[(i + 1) % n]
                     lines.append(
-                        f"_geo.append(Part.LineSegment(App.Vector({x1},{y1},0), App.Vector({x2},{y2},0)))"
+                        f"_geo.append(Part.LineSegment(FreeCAD.Vector({x1},{y1},0), FreeCAD.Vector({x2},{y2},0)))"
                     )
                 for i in range(n):
                     nxt = (i + 1) % n

@@ -3069,11 +3069,14 @@ Available workbenches: {", ".join(sorted(FreeCADGui.listWorkbenches().keys())) i
                     return o
             return None
 
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            return False, "No active document. Please open or create a FreeCAD document first."
         scope = {
             "__builtins__": SAFE_BUILTINS,
             "App": FreeCAD, "Gui": FreeCADGui,
             "FreeCAD": FreeCAD, "FreeCADGui": FreeCADGui,
-            "doc": FreeCAD.ActiveDocument, "math": math,
+            "doc": doc, "math": math,
             "find": resolve_obj,
             "EnclosureBuilder": EnclosureBuilder,
             "DrawingGenerator": DrawingGenerator,

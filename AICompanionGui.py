@@ -861,6 +861,13 @@ class AISidebar(QtWidgets.QDialog):
         l.addWidget(btns)
         d.exec_()
 
+    def _require_orch(self):
+        """Raise if orchestrator is not initialized. Guards all methods that access self.orch."""
+        if not self.orch:
+            raise RuntimeError(
+                "Orchestrator not initialized. Use Settings → Rebuild or restart the workbench."
+            )
+
     def _rebuild(self):
         prov = self._current_provider()
         entry = self._current_model_entry()
@@ -945,6 +952,7 @@ class AISidebar(QtWidgets.QDialog):
             self.cp.clear(); self.cp.setVisible(False); self.macro_btn.setVisible(False); self.copy_btn.setVisible(False)
     
     def _savem(self):
+        self._require_orch()
         if self._last_code:
             ok,path=self.orch.save_macro(self._last_code)
             self._status_text.setText("💾 Saved!" if ok else f"❌ {path}")
@@ -1041,6 +1049,7 @@ class AISidebar(QtWidgets.QDialog):
     
     def _new_chat(self):
         """Reset conversation: clear chat, history, and state; show mascot."""
+        self._require_orch()
         if self._code_worker:
             self._code_worker.cancel()
         self.orch.conversation_history.clear()
@@ -1225,6 +1234,7 @@ class AISidebar(QtWidgets.QDialog):
     # ── Send ──────────────────────────────────────────────────
     def _launch_worker(self, api_msgs, user_input):
         """Start CodeWorker in a background QThread for the API call only."""
+        self._require_orch()
         self._abandoned = False  # reset stop state for fresh worker
         self._worker_gen += 1
         gen = self._worker_gen
@@ -1243,6 +1253,7 @@ class AISidebar(QtWidgets.QDialog):
         self._worker_thread.start()
 
     def _do_send(self, text):
+        self._require_orch()
         self.msg("You", text)
         self.spin.setVisible(True)
         self._set_dot("#f7c96a")
@@ -1326,6 +1337,7 @@ class AISidebar(QtWidgets.QDialog):
 
     # ── Callbacks ─────────────────────────────────────────────
     def _on_code_ready(self, raw_text, code, used_api, gen=0):
+        self._require_orch()
         try:
             if self._closed or self._abandoned:
                 return
@@ -1457,6 +1469,7 @@ class AISidebar(QtWidgets.QDialog):
 
     def _request_next_step(self, observation_prelim):
         """Ask the AI to generate code for the next plan step. Re-reads document fresh."""
+        self._require_orch()
         step_idx = self._plan_step_idx
         fresh_context = self.orch.get_document_context()
         diff_result = self.orch.capture_structured_diff()
@@ -1476,6 +1489,7 @@ class AISidebar(QtWidgets.QDialog):
 
     def _on_mode_changed(self, new_mode):
         """Handle mode switch — preserve plan state across the transition."""
+        self._require_orch()
         if self._code_worker is not None or (self._worker_thread and self._worker_thread.isRunning()):
             self._on_stop_step()
         self._mode = new_mode
@@ -1504,6 +1518,7 @@ class AISidebar(QtWidgets.QDialog):
 
     def _on_pcb_generate(self, params):
         """Handle PCB enclosure generation request."""
+        self._require_orch()
         if not self.orch._board_context:
             self.msg("System", "No board loaded. Drop a .kicad_pcb file first.")
             return
