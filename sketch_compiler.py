@@ -47,11 +47,16 @@ class SketchCompiler:
                     lines.append(
                         f"_geo.append(Part.LineSegment(App.Vector({x1},{y1},0), App.Vector({x2},{y2},0)))"
                     )
+                g = geo_idx
                 for i in range(4):
                     nxt = (i + 1) % 4
                     lines.append(
-                        f"_con.append(Sketcher.Constraint('Coincident', {geo_idx + i}, 2, {geo_idx + nxt}, 1))"
+                        f"_con.append(Sketcher.Constraint('Coincident', {g + i}, 2, {g + nxt}, 1))"
                     )
+                lines.append(f"_con.append(Sketcher.Constraint('Horizontal', {g}))")
+                lines.append(f"_con.append(Sketcher.Constraint('Vertical', {g + 1}))")
+                lines.append(f"_con.append(Sketcher.Constraint('Distance', {g}, {w}))")
+                lines.append(f"_con.append(Sketcher.Constraint('Distance', {g + 1}, {h}))")
                 geo_idx += 4
                 prev_end = None
 
@@ -59,6 +64,9 @@ class SketchCompiler:
                 cx, cy, r = prim["cx"], prim["cy"], prim["r"]
                 lines.append(
                     f"_geo.append(Part.Circle(App.Vector({cx},{cy},0), App.Vector(0,0,1), {r}))"
+                )
+                lines.append(
+                    f"_con.append(Sketcher.Constraint('Radius', {geo_idx}, {r}))"
                 )
                 geo_idx += 1
                 prev_end = None
