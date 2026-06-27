@@ -8,9 +8,9 @@ const FROM_NAME = "UCAD Assistant";
 const PRODUCT_NAME = "UCAD Assistant";
 
 const PLANS = {
-    monthly:  { label: "Monthly",  price: "4.99",  description: "Cancel anytime" },
-    yearly:   { label: "Yearly",   price: "29.00", description: "Best value — 52% off" },
-    lifetime: { label: "Lifetime", price: "99.00", description: "Pay once, free upgrades" },
+    monthly:  { label: "Monthly",  price: "4.99",  suffix: "/mo",  description: "Cancel anytime" },
+    yearly:   { label: "Yearly",   price: "29.00", suffix: "",    description: "Best value annual" },
+    lifetime: { label: "Lifetime", price: "99.00", suffix: " once", description: "Pay once, keep forever · Free Upgrades" },
 };
 
 const PAYPAL_CLIENT_ID = "Ad6xM6-ATqDvL6C1dynCV_MqgcP6KV-AsHq1NJ5D8xJrm03GkLUpnYHuNJ-8wkpba3ptNwp9wn0JfNCt";
@@ -149,7 +149,7 @@ h1 { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
     <div class="plan ${k === plan ? 'active' : ''}" data-plan="${k}" onclick="selectPlan('${k}')">
       <div class="radio"><input type="radio" name="plan" value="${k}" ${k === plan ? 'checked' : ''}></div>
       <h3>${v.label}</h3>
-      <div class="price">$${v.price} <span>${k === 'lifetime' ? 'once' : '/mo'}</span></div>
+      <div class="price">$${v.price}<span>${v.suffix}</span></div>
       <div class="desc">${v.description}</div>
     </div>
   `).join('')}
