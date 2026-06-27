@@ -89,4 +89,4 @@ python tools/build_release.py
 
 ## License
 
-MIT
+Proprietary — All Rights Reserved. Requires a valid license key. See [licensing server](https://ai-companion-licensing.usayeed10.workers.dev) for purchase.
