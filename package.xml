@@ -10,6 +10,7 @@
   <url type="repository" branch="master">https://github.com/AbdullahUsayeed/UCAD</url>
   <url type="bugtracker">https://github.com/AbdullahUsayeed/UCAD/issues</url>
   <url type="readme">https://github.com/AbdullahUsayeed/UCAD/blob/master/README.md</url>
+  <url type="license">https://github.com/AbdullahUsayeed/UCAD/blob/master/LICENSE</url>
 
   <!-- FreeCAD version requirements -->
   <freecadmin>0.21</freecadmin>
