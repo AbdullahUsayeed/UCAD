@@ -97,7 +97,7 @@ Then install dependencies:
 
 1. Select **UCAD Assistant** from the workbench dropdown
 2. Click **Open AI Copilot** (or `Ctrl+Shift+A`)
-3. Enter your Anthropic API key in Settings
+3. Enter your API key in Settings (or select Ollama for a local model — no key required)
 4. Type a request:
    - *"make a gear with 20 teeth and 2mm module"*
    - *"draw a triangle with 90° apex and 50mm height"*
@@ -122,7 +122,7 @@ Then install dependencies:
 ## Requirements
 
 - FreeCAD 1.1+ (Python 3.11, win_amd64 for bundled deps)
-- Anthropic API key ([get one here](https://console.anthropic.com/))
+- API key for your chosen LLM provider (Anthropic, OpenAI, Google, Groq, etc. — or use a local model via Ollama with no key needed)
 - Windows (primary), Linux/macOS (untested but should work)
 
 | Package | Required | Purpose |
