@@ -2,6 +2,8 @@
 
 The most advanced CAD agent is Available on FreeCad
 
+[![Demo Video](https://img.youtube.com/vi/-gEuExxmy0Y/0.jpg)](https://www.youtube.com/watch?v=-gEuExxmy0Y)
+
 ## What This Is
 
 UCAD is a FreeCAD workbench that lets you design in plain English. It is not a chatbot wrapper. It is a purpose-built CAD agent with deep knowledge of the FreeCAD API — scoped per workbench, self-correcting on mistakes, and tested against real FreeCAD geometry before it ever reaches your model.
