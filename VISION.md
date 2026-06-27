@@ -34,11 +34,21 @@ multi-step plan correction.
 - If a workbench isn't installed, the assistant tells you exactly how to
   install it from the Addon Manager
 
-### Measure and analyze
-- Compute volume, area, center of mass, bounding box of any shape
-- Measure distances between faces, edges, vertices
-- Detect mounting holes, connector positions, cutouts
-- Generate clearance envelopes for enclosure design
+### Generate 3D-printable PCB enclosures
+- Drop a `.kicad_pcb` file — no KiCad workbench needed, parses S-expressions
+  directly (Edge.Cuts outline, mounting holes, component positions, connector
+  types via USB/HDMI/RJ45 keyword matching)
+- AI config mode: sends board geometry to the LLM, which returns a JSON
+  param block (wall thickness, margin, boss OD, snap fit count, etc.)
+- Direct template mode: bypasses AI, generates enclosure instantly from
+  parsed board data
+- Parametric shell with standoffs, lid with screw counterbores, M3 heat-set
+  insert holes, interlocking tongue-and-groove, ventilation slots, snap-fit
+  cantilever arms, cable-tie anchor posts, label recess
+- Connector cutouts: USB-A/C, HDMI, barrel jack, RJ45, DB9, SMA — auto-sized
+  from a type registry with safe-zone collision clipping
+- Hammond instant matching: search a 30+ model catalog (1551/1553/1590/1455/
+  1591 series) for the smallest fitting off-the-shelf enclosure
 
 ### Multi-step autonomous plans
 - "Design a 3D-printable enclosure for this PCB": imports the STEP, measures
@@ -52,6 +62,33 @@ multi-step plan correction.
 - Failed operations roll back cleanly — no orphaned geometry, no corrupted
   documents
 - If the AI generates bad code, the document state is unchanged
+
+### Parameterized template execution
+- Templates: bracket, flange, pipe, gear, triangle, curved shapes, addFC,
+  sketch box, PCB enclosure
+- Schema-validated parameters prevent AI from generating dimensionally
+  degenerate geometry (negative wall thickness, zero radii)
+- Templates produce valid executable Python verified by AST pass before exec
+
+### Gear generation (pure Part API)
+- Full involute gear profile with addendum/dedendum circles, root arcs,
+  tip arcs, both flank involutes — no FCGear dependency
+- Falls back to MultiFuse of extruded tooth profiles if single boolean
+  operation fails
+- FCGear (`freecad.gears`) is disabled: it crashes FreeCAD >=1.1 through
+  the InitGui.py wrapper chain
+
+### DXF processing
+- Reads R2010 ASCII/binary DXF files via ezdxf
+- Extracts closed polylines/lines/arcs/circles as clean profile groups
+- Warning deduplication: 692 identical lines compressed to 5 meaningful
+  warning groups
+- Unit auto-detection: $INSUNITS=0 → coordinate-extent heuristic
+  (coords >5000 → inches, >500 → mm_uncertain, else → mm)
+- Largest-area outline fallback when no layer name matches OUTLINE/BORDER/EDGE
+- HATCH boundary per-entity try/except — one bad boundary never kills all
+  hatches
+- Open SPLINE chaining with two-pass greedy + 5% perimeter gap closure
 
 ## Architecture
 
@@ -68,14 +105,67 @@ multi-step plan correction.
 │   _on_code_ready    │  ← Main thread: validate, execute, observe
 └──────┬──────────────┘
        │
-┌──────▼──────────────┐
-│ AIOrchestrator      │  ← Knowledge base, exec scope, transactions
-│   - build_messages  │     observation, diff, constraint validation
-│   - execute_code    │
-│   - call_ai         │
-│   - capture_obs     │
-│   - validate_sketch │
-└─────────────────────┘
+┌──────▼─────────────────────────────────────────────────┐
+│ AIOrchestrator                                          │
+│   - build_system_prompt()   knowledge injection engine  │
+│       · RESPONSE_MODE_HEADER classifies simple/complex   │
+│       · Priority/exclusion: curved shapes excluded when  │
+│         gear fires; airfoil+curved co-inject wing bridge │
+│       · 5 knowledge modules: gear, triangle, curved      │
+│         shapes, airfoil, addFC — each with trigger regex │
+│       · Always-on API corrections: view/display color    │
+│         format, .rotate() fix, no makeExtrusion, hull    │
+│         wire plane requirement, curved shapes pre-flight │
+│   - execute_code()           sandboxed exec + transaction │
+│   - call_ai()                provider dispatch + fallback │
+│   - capture_obs()            diff-based observation       │
+│   - validate_sketch()        AST-level constraint check   │
+│   - set_board_context()      .kicad_pcb → board data      │
+│   - execute_enclosure_template()  direct geometry gen     │
+│   - get_fallback_code()      quick-code dispatch          │
+│   - exec_macro()             runs addFC.FCMacro           │
+└──────────────────────────┬──────────────────────────────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         │                 │                  │
+         ▼                 ▼                  ▼
+   ┌──────────┐    ┌──────────────┐    ┌───────────┐
+   │  Secret   │    │  Templates   │    │ Provider  │
+   │  Store    │    │  render +    │    │ Adapters  │
+   │ DPAPI/   │    │  validate    │    │ Anthropic │
+   │ keyring/ │    │  bracket,    │    │ Ollama    │
+   │ Fernet   │    │  flange, addFC│   │ Google    │
+   └──────────┘    └──────────────┘    └───────────┘
+         │
+         ▼
+   ┌─────────────────────────────────────────────┐
+   │         PCB Enclosure Pipeline              │
+   │                                             │
+   │  .kicad_pcb → pcb_parser.parse()            │
+   │       ↓                                     │
+   │  PrecomputedGeometry (context_injector)     │
+   │       ↓                                     │
+   │  AI returns JSON config OR direct params    │
+   │       ↓                                     │
+   │  enclosure_template.build_from_parsed()     │
+   │       ↓                                     │
+   │  EnclosureGeometry (derived dims + shapes)  │
+   │       ↓                                     │
+   │  DocumentBuilder (Part::Feature + colors)   │
+   │       ↓                                     │
+   │  FreeCAD doc: Base, Lid, PCB ref, snaps     │
+   └─────────────────────────────────────────────┘
+         │
+         ▼
+   ┌─────────────────────────────────────────────┐
+   │            DXF Pipeline                     │
+   │                                             │
+   │  .dxf → dxf_processor.process_dxf()         │
+   │       ↓                                     │
+   │  Close SPLINE chains + deduplicate warnings │
+   │       ↓                                     │
+   │  Profile groups: outline, holes, cutouts    │
+   └─────────────────────────────────────────────┘
 ```
 
 ### Key design decisions
@@ -89,19 +179,29 @@ multi-step plan correction.
 | **AST-level sketch validation** | Catches bad geometry indices before exec() — no C++ crash |
 | **Shape-hash diff** | Detects modifications through transient intermediate objects |
 | **Provider adapters** | Drop-in support for any OpenAI-compatible LLM or Ollama local model |
+| **Knowledge injection with priority/exclusion** | Curved shapes suppressed when gear fires; airfoil+curved co-inject wing bridge; addFC always orthogonal — prevents contradictory advice |
+| **Response mode header** | System prompt starts with SIMPLE/COMPLEX classifier — simple requests get code without planning preamble, reducing latency and hallucinated steps |
+| **Templates over raw code gen** | Schema-validated templates produce dimensionally safe geometry; AI only fills JSON params, never writes raw Part primitives |
+| **Direct ViewObject guard** | `_set_color()` wraps all display API calls in hasattr checks — no crash in headless FreeCAD console mode |
 
 ### Safety mechanisms
 
 1. **Safe exec scope** — blocked imports (os, sys, subprocess, socket, etc.),
    only FreeCAD API + math available
 2. **AST validation** — sketch constraint indices checked against running
-   geometry counter before execution
+   geometry counter before execution; template code validated before any mock
+   exec
 3. **Transaction rollback** — abort on any exception, document stays clean
 4. **Observation feedback loop** — AI sees exactly what changed after each
    step, enabling self-correction
 5. **Maximum retries** — 5 retries per step with error-analysis prompts
 6. **Thread safety** — `_cancel` flag suppresses signal handlers after stop;
    threads finish naturally instead of being terminated mid-operation
+7. **Mutation guard tests** — every knowledge module's `should_inject_*`
+   can be toggled off independently; always-on API corrections survive all
+   toggles
+8. **Secret store** — three backends (Windows DPAPI, system keyring, Fernet
+   encrypted file) prevent API keys from leaking into plain-text config
 
 ## Current Limitations
 
@@ -113,6 +213,11 @@ multi-step plan correction.
   first attempt
 - **Loops in generated code** — AST validator doesn't fully unroll dynamic
   loops (for x in range(N) with non-constant N)
+- **PCB enclosure FreeCAD verification** — geometric output cannot be
+  visually verified without a real FreeCAD instance (CI runs headless)
+- **DXF SPLINE chaining** — greedy endpoint matching works for gaps <5%
+  perimeter; wider gaps between disconnected SPLINE segments are not
+  bridged
 
 ## Why This Didn't Exist Before
 
@@ -126,13 +231,17 @@ Three things had to converge:
 2. **Orchestration layer** — the hard part isn't the AI call, it's the
    scaffolding around it: safe exec with transactions, diff-based observation
    compression, AST-level constraint validation, multi-step plan state
-   machines, provider failover, Qt threading with proper cancellation
+   machines, knowledge injection with priority/exclusion, template execution
+   with schema validation, provider failover, Qt threading with proper
+   cancellation, secret storage, and 238+ automated tests
 
 3. **Someone willing to grind** — FreeCAD's Python API has undocumented
    edge cases. Half the work was discovering which API objects actually work
    vs what the documentation claims. The sketch constraint validator alone
    required understanding FreeCAD's geo-index tracking at the point of
-   constraint creation, not at the end of the code block.
+   constraint creation, not at the end of the code block. The enclosure
+   generator required reverse-engineering KiCad's S-expression format to
+   avoid any workbench dependency.
 
 ## Competitive Landscape (2026)
 
@@ -145,7 +254,10 @@ Three things had to converge:
 | **Generic GPT plugins** | Raw code gen | No safety, no transactions, no validation |
 
 We're the only open-source, fully autonomous CAD agent with rollback safety,
-multi-step plan execution, and workbench-agnostic Python execution.
+multi-step plan execution, workbench-agnostic Python execution, PCB enclosure
+generation, parameterized template validation, DXF processing with closed
+profile extraction, and headless-safe geometry building with 238 integration
+tests running in CI without FreeCAD installed.
 
 ## Near-Term Roadmap
 
@@ -159,8 +271,18 @@ multi-step plan execution, and workbench-agnostic Python execution.
 - [x] Thread-safe cancellation
 - [x] Mode-preserving plan state
 - [x] Self-critique hook
+- [x] Knowledge injection engine (5 modules, priority/exclusion, API corrections)
+- [x] Parameterized template system (bracket, flange, pipe, gear, triangle, addFC)
+- [x] Gear generation via pure Part API (FCGear disabled)
+- [x] Secret store (DPAPI / keyring / Fernet)
+- [x] PCB enclosure pipeline (parser → precompute → template → DocumentBuilder)
+- [x] DXF processor with warning de (simple/complex classification)
+- [x] View/display API corrections (always-on)
+- [x] 238 automated tests (zero FreeCAD required, zero API calls)duplication, unit detection, SPLINE chaining
+- [x] Response mode header
 - [ ] FEM setup assistant
 - [ ] Mesh repair / simplification
 - [ ] Image-to-CAD (import picture → trace → extrude)
 - [ ] Batch rendering of design variants
 - [ ] Export profiles (STL, STEP, SVG, PDF)
+- [ ] Manual FreeCAD verification of Part API gear, enclosure, and DXF output

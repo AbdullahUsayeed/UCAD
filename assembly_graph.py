@@ -1,5 +1,4 @@
 import FreeCAD
-import Part
 
 
 class AssemblyGraph:
@@ -58,7 +57,8 @@ class AssemblyGraph:
         self._ready = False
         try:
             self.doc = FreeCAD.ActiveDocument
-        except Exception:
+        except Exception as ex:
+            print(f"[AI] AssemblyGraph.rebuild failed: {ex}")
             self.doc = None
         if self.doc:
             self._scan()
@@ -98,8 +98,8 @@ class AssemblyGraph:
                     ctype=str(jtype).lower(),
                     params={"joint_name": obj.Label or obj.Name},
                 ))
-            except Exception:
-                pass
+            except Exception as ex:
+                print(f"[AI] AssemblyGraph._scan_joints failed: {ex}")
 
     def _scan_attachments(self):
         """Find objects with AttachmentSupport (e.g. PartDesign bodies attached to other bodies)."""
@@ -113,6 +113,8 @@ class AssemblyGraph:
                 if not supp or not hasattr(supp, "__getitem__"):
                     continue
                 parent = supp[0]
+                if isinstance(parent, tuple):
+                    parent = parent[0]
                 if parent and parent != obj and not self._is_datum(parent):
                     offset = getattr(obj, "AttachmentOffset", None)
                     dist = 0.0
@@ -124,8 +126,8 @@ class AssemblyGraph:
                         ctype="attachment",
                         params={"offset_distance": round(dist, 2)},
                     ))
-            except Exception:
-                pass
+            except Exception as ex:
+                print(f"[AI] AssemblyGraph._scan_attachments failed: {ex}")
 
     def _scan_implicit(self):
         """Detect bodies at nearly the same position — strong hint they should be constrained."""
@@ -135,7 +137,7 @@ class AssemblyGraph:
             for j in range(i + 1, len(bodies)):
                 a, b = bodies[i], bodies[j]
                 try:
-                    d = a.Placement.Base.distToPoint(b.Placement.Base)
+                    d = (a.Placement.Base - b.Placement.Base).Length
                     if d < 0.5:
                         self.edges.append(AssemblyGraph.Edge(
                             source=a.Label or a.Name,
@@ -143,8 +145,8 @@ class AssemblyGraph:
                             ctype="coincident",
                             params={"distance": round(d, 2)},
                         ))
-                except Exception:
-                    pass
+                except Exception as ex:
+                    print(f"[AI] AssemblyGraph._scan_implicit failed: {ex}")
 
     @staticmethod
     def _is_datum(obj) -> bool:
@@ -197,12 +199,12 @@ class AssemblyGraph:
             try:
                 pa = obj_a.Placement.Base
                 pb = obj_b.Placement.Base
-                dist = pa.distToPoint(pb)
+                dist = (pa - pb).Length
                 v = e.violation(dist)
                 if v:
                     violations.append(v)
-            except Exception:
-                pass
+            except Exception as ex:
+                print(f"[AI] AssemblyGraph.verify failed: {ex}")
 
             # 2. Interference check — only once per unordered pair
             pair_key = tuple(sorted([e.source, e.target]))
@@ -227,8 +229,8 @@ class AssemblyGraph:
                         f"{e.source} and {e.target} INTERFERE — overlap "
                         f"volume={common.Volume:.1f}mm³"
                     )
-            except Exception:
-                pass
+            except Exception as ex:
+                print(f"[AI] AssemblyGraph.verify interference failed: {ex}")
 
         return violations
 
@@ -271,8 +273,8 @@ class AssemblyGraph:
                         "rotation": (round(r.Q[0], 4), round(r.Q[1], 4),
                                      round(r.Q[2], 4), round(r.Q[3], 4)),
                     }
-                except Exception:
-                    pass
+                except Exception as ex:
+                    print(f"[AI] AssemblyGraph.snapshot failed: {ex}")
         return snap
 
     # ── Impact analysis ────────────────────────────────────

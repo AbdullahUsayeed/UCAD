@@ -2,3 +2,13 @@ config.json
 __pycache__/
 *.pyc
 .DS_Store
+*.cover
+.coverage
+dist/
+*.tmp
+server/node_modules/
+server/.wrangler/
+.python-deps/
+pyarmor.bug.log
+secret_store.py,cover
+test_obf/

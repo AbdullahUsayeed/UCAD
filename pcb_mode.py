@@ -1,9 +1,8 @@
 import os
-import json
-from compat import QtWidgets, QtCore, QtGui, Qt, Signal
+from compat import QtWidgets, Qt, Signal
 
 
-class PcbInputWidget(QtWidgets.QStackedWidget):
+class PcbInputWidget(QtWidgets.QWidget):
     generate_clicked = Signal(dict)
 
     def __init__(self, orch=None, parent=None):
@@ -16,14 +15,59 @@ class PcbInputWidget(QtWidgets.QStackedWidget):
     def set_orch(self, orch):
         self.orch = orch
 
+    # Forward QStackedWidget interface to internal stack
+    def setCurrentIndex(self, idx):
+        self._stack.setCurrentIndex(idx)
+
+    def currentIndex(self):
+        return self._stack.currentIndex()
+
+    def addWidget(self, w):
+        return self._stack.addWidget(w)
+
+    def widget(self, idx):
+        return self._stack.widget(idx)
+
     def _build_ui(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self._stack = QtWidgets.QStackedWidget()
         self._drop_page = self._make_drop_page()
         self._summary_page = self._make_summary_page()
         self._chat_page = self._make_chat_page()
-        self.addWidget(self._drop_page)
-        self.addWidget(self._summary_page)
-        self.addWidget(self._chat_page)
-        self.setCurrentIndex(0)
+        self._stack.addWidget(self._drop_page)
+        self._stack.addWidget(self._summary_page)
+        self._stack.addWidget(self._chat_page)
+        self._stack.setCurrentIndex(0)
+        layout.addWidget(self._stack, 1)
+
+        # Persistent input bar (visible on all pages)
+        inp_row = QtWidgets.QHBoxLayout()
+        inp_row.setContentsMargins(8, 0, 8, 0)
+        self._pcb_input = QtWidgets.QLineEdit()
+        self._pcb_input.setPlaceholderText("Refine enclosure... (e.g. 'move USB cutout up 2mm')")
+        self._pcb_input.setStyleSheet("""
+            QLineEdit {
+                background: #121a2a; color: #e6edf3;
+                border: 1.5px solid #3a414a; border-radius: 8px;
+                padding: 8px 12px; font-size: 12px;
+            }
+            QLineEdit:focus { border-color: #58a6ff; }
+        """)
+        self._pcb_input.returnPressed.connect(self._send_refinement)
+        inp_row.addWidget(self._pcb_input, 1)
+
+        send_btn = QtWidgets.QPushButton("Send")
+        send_btn.setStyleSheet("""
+            QPushButton { background:#1f6feb; color:#fff; border:none;
+                          border-radius:6px; padding:6px 12px; font-size:12px; font-weight:600; }
+            QPushButton:hover { background:#388bfd; }
+        """)
+        send_btn.clicked.connect(self._send_refinement)
+        inp_row.addWidget(send_btn)
+        layout.addLayout(inp_row)
 
     # ── Drop Page ───────────────────────────────────────────
 
@@ -101,8 +145,45 @@ class PcbInputWidget(QtWidgets.QStackedWidget):
             self._show_error(f"Failed to parse: {e}")
             return
 
+        # Show parsed dimensions immediately so user knows if parsing worked.
+        # The 100x60 check is a heuristic (real 100x60mm boards will false-trigger);
+        # the robust fix is a used_fallback flag returned by the parser, not done here.
+        dims = self._board_data.get("dimensions", {})
+        w = dims.get("width", 0)
+        h = dims.get("height", 0)
+        holes = len(self._board_data.get("mounting_holes", []))
+        connectors = len(self._board_data.get("edge_connectors", []))
+        comps = len(self._board_data.get("components", []))
+
+        print(f"[PCB] Board context set. Keys: {list(self._board_data.keys())}")
+        print(f"[PCB]   dimensions: {dims}")
+        print(f"[PCB]   width={w}, height={h}")
         if self.orch:
             self.orch._board_context = self._board_data
+            print(f"[PCB] Stored board context type={type(self.orch._board_context).__name__}")
+
+        # ── Status + import hint ──────────────────────────────────────────────
+        if w == 100.0 and h == 60.0:
+            self._status.setText(
+                "\u26a0 No Edge.Cuts found \u2014 using 100\u00d760mm default. "
+                "Check your KiCad file has a board outline."
+            )
+            self._status.setStyleSheet("color:#ff6b6b; font-size:11px;")
+        else:
+            self._status.setText(
+                f"\u2713 {w}mm \u00d7 {h}mm  |  "
+                f"{comps} components  |  "
+                f"{holes} mounting holes  |  "
+                f"{connectors} edge connectors"
+            )
+            self._status.setStyleSheet("color:#22c55e; font-size:11px;")
+
+        self._drop_zone.setText(
+            "<div style='font-size:11px; color:#8b949e; text-align:center;'>"
+            "\u2713 PCB data loaded. "
+            "Now use <b>File \u2192 Import \u2192 KiCad PCB</b> to see the 3D board."
+            "</div>"
+        )
 
         self._show_summary()
 
@@ -171,21 +252,26 @@ class PcbInputWidget(QtWidgets.QStackedWidget):
         layout.addWidget(params)
 
         self._gen_btn = QtWidgets.QPushButton("Generate Enclosure")
+        self._gen_btn.setToolTip(
+            "AI analyzes the PCB and generates a custom enclosure with connector cutouts"
+        )
         self._gen_btn.setStyleSheet("""
             QPushButton {
-                background: #1f6feb; color: #fff; border: none;
-                border-radius: 8px; padding: 8px; font-size: 13px; font-weight: 600;
+                background: #7c3aed; color: #fff; border: none;
+                border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600;
             }
-            QPushButton:hover { background: #388bfd; }
-            QPushButton:pressed { background: #0969da; }
+            QPushButton:hover { background: #8b5cf6; }
+            QPushButton:pressed { background: #6d28d9; }
         """)
         self._gen_btn.clicked.connect(self._on_generate)
+
         layout.addWidget(self._gen_btn)
 
         self._status = QtWidgets.QLabel("")
         self._status.setStyleSheet("color:#8b949e; font-size:10px;")
         layout.addWidget(self._status)
 
+        layout.addStretch()
         return page
 
     def _make_spin(self, min_v, max_v, default):
@@ -222,12 +308,24 @@ class PcbInputWidget(QtWidgets.QStackedWidget):
             self._lid_clr_spin.setValue(params["lid_clearance"])
             if params.get("boss_od"):
                 self._boss_od_spin.setValue(params["boss_od"])
-        except Exception:
-            pass
+        except Exception as ex:
+            print(f"[AI] PcbInputWidget.load_board parameter suggestion failed: {ex}")
+
+        # Hammond fit finder — instant, no AI
+        hammond_fits = []
+        try:
+            from enclosure_templates_v2 import find_hammond_for_board
+            hammond_fits = find_hammond_for_board(
+                dims["width"], dims["height"], component_height=tallest
+            )
+        except Exception as ex:
+            print(f"[PCB] Hammond fit finder failed: {ex}")
+
+        pcb_area = dims["width"] * dims["height"]
 
         summary = [
             f"<b style='color:#58a6ff;'>✓ {os.path.basename(self._board_path)} loaded</b><br>",
-            f"Board: {dims['width']} x {dims['height']} mm",
+            f"Board: {dims['width']} x {dims['height']} mm ({pcb_area:.0f}mm²)",
             f"Mounting holes: {len(holes)}",
             f"Edge connectors: {len(connectors)}",
         ]
@@ -236,17 +334,41 @@ class PcbInputWidget(QtWidgets.QStackedWidget):
         if tallest:
             summary.append(f"Tallest component: {tallest}mm")
 
+        # Show top 5 Hammond fits
+        if hammond_fits:
+            summary.append("<br><b style='color:#f7c96a;'>📦 Best Hammond fits:</b>")
+            for mid, spec in hammond_fits[:5]:
+                ml = spec["outer_l"]
+                mw = spec["outer_w"]
+                mh = spec["outer_h"]
+                il = spec["interior_l"]
+                iw = spec["interior_w"]
+                ih = spec["interior_h"]
+                margin_w = round(il - dims["width"], 1)
+                margin_h = round(iw - dims["height"], 1)
+                margin_z = round(ih - tallest, 1)
+                summary.append(
+                    f"<span style='color:#e6edf3;'>"
+                    f"  {mid}  {ml}×{mw}×{mh}mm  "
+                    f"(+{margin_w}W +{margin_h}H +{margin_z}Z margin)</span>"
+                )
+
         self._summary_label.setHtml("<br>".join(summary))
         self.setCurrentIndex(1)
 
     def _on_generate(self):
+        if not self._board_data:
+            return
         params = {
             "wall_thickness": self._wall_t_spin.value(),
             "lid_clearance": self._lid_clr_spin.value(),
             "boss_od": self._boss_od_spin.value(),
+            "margin": 2.0,
+            "headroom_mm": 2.0,
             "material": self._material_combo.currentText(),
+            "ai_mode": True,
         }
-        self._status.setText("Generating enclosure...")
+        self._status.setText("AI analyzing PCB and generating enclosure...")
         self._status.setStyleSheet("color:#f7c96a; font-size:10px;")
         self.generate_clicked.emit(params)
 
@@ -272,37 +394,13 @@ class PcbInputWidget(QtWidgets.QStackedWidget):
         """)
         layout.addWidget(self._pcb_chat, 1)
 
-        inp_row = QtWidgets.QHBoxLayout()
-        self._pcb_input = QtWidgets.QLineEdit()
-        self._pcb_input.setPlaceholderText("Refine enclosure... (e.g. 'move USB cutout up 2mm')")
-        self._pcb_input.setStyleSheet("""
-            QLineEdit {
-                background: #121a2a; color: #e6edf3;
-                border: 1.5px solid #3a414a; border-radius: 8px;
-                padding: 8px 12px; font-size: 12px;
-            }
-            QLineEdit:focus { border-color: #58a6ff; }
-        """)
-        self._pcb_input.returnPressed.connect(self._send_refinement)
-        inp_row.addWidget(self._pcb_input, 1)
-
-        send_btn = QtWidgets.QPushButton("Send")
-        send_btn.setStyleSheet("""
-            QPushButton { background:#1f6feb; color:#fff; border:none;
-                          border-radius:6px; padding:6px 12px; font-size:12px; font-weight:600; }
-            QPushButton:hover { background:#388bfd; }
-        """)
-        send_btn.clicked.connect(self._send_refinement)
-        inp_row.addWidget(send_btn)
-        layout.addLayout(inp_row)
-
         return page
 
     def _send_refinement(self):
         text = self._pcb_input.text().strip()
         if text:
-            self._pcb_chat.append(f"<b style='color:#58a6ff;'>You:</b> {text}")
             self._pcb_input.clear()
+            self._pcb_chat.append(f"<b style='color:#58a6ff;'>You:</b> {text}")
             self.generate_clicked.emit({"refinement": text})
 
     def add_message(self, msg):

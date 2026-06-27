@@ -20,6 +20,14 @@ FOOTPRINT_HEIGHTS = {
     "SO8": 3.0,
     "D_PAK": 4.5,
     "TO_220": 16.0,
+    "Button": 4.0,
+    "SW_Push": 4.0,
+    "LED": 2.0,
+    "Relay": 15.0,
+    "Fuse": 10.0,
+    "Diode": 2.0,
+    "Crystal": 2.0,
+    "Oscillator": 2.5,
 }
 
 CONNECTOR_KEYWORDS = ["USB", "HDMI", "RJ45", "Audio", "Terminal", "Connector",
@@ -27,22 +35,71 @@ CONNECTOR_KEYWORDS = ["USB", "HDMI", "RJ45", "Audio", "Terminal", "Connector",
                        "PinHeader", "Socket", "Barrel_Jack", "DC",
                        "Button", "SW_", "Switch"]
 
+# Larger SMD codes for connector-like parts (e.g., _1005 is actually 1005)
+SMD_HEIGHTS = {"0201": 0.3, "0402": 0.5, "0603": 0.8, "0805": 1.3,
+               "1005": 3.5, "1206": 1.8, "1210": 2.5, "1806": 2.0,
+               "1812": 2.5, "2012": 1.5, "2512": 2.0, "3216": 1.8}
+
+# Matches a balanced ( ... ) block starting at a given position
+def _balanced_block(content, start):
+    if content[start] != '(':
+        return content[start:start + 3000]
+    depth = 0
+    i = start
+    n = min(len(content), start + 12000)
+    while i < n:
+        ch = content[i]
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0:
+                return content[start:i + 1]
+        elif ch == '"':
+            i += 1
+            while i < n and content[i] != '"':
+                if content[i] == '\\':
+                    i += 1
+                i += 1
+        i += 1
+    return content[start:start + 3000]
+
 
 def _get_height(name):
     name_upper = name.upper()
     for key, h in FOOTPRINT_HEIGHTS.items():
         if key.upper() in name_upper:
             return h
-    # SMD passives: extract metric size code like _0402, _0603, etc
-    smd = {"0201": 0.3, "0402": 0.5, "0603": 0.8, "0805": 1.3,
-           "1005": 3.5, "1206": 1.8, "1210": 2.5, "1806": 2.0,
-           "1812": 2.5, "2012": 1.5, "2512": 2.0, "3216": 1.8}
     m = re.search(r"_(\d{4})", name)
     if m:
         code = m.group(1)
-        if code in smd:
-            return smd[code]
+        if code in SMD_HEIGHTS:
+            return SMD_HEIGHTS[code]
     return 10.0
+
+
+def _is_connector_footprint(name):
+    name_lower = name.lower()
+    return any(kw.lower() in name_lower for kw in CONNECTOR_KEYWORDS)
+
+
+def _parse_footprint_dimensions(block):
+    """Extract the footprint's pad bounding box to estimate width/length.
+    
+    Returns (width_mm, length_mm) or (None, None) if no pads found.
+    """
+    pad_xs = []
+    pad_ys = []
+    for pad_m in re.finditer(r'\(pad\s+"[^"]*"\s+\S+\s+\S+\s+\(at\s+([\d.-]+)\s+([\d.-]+)', block):
+        px = float(pad_m.group(1))
+        py = float(pad_m.group(2))
+        pad_xs.append(px)
+        pad_ys.append(py)
+    if not pad_xs:
+        return None, None
+    w = round(max(pad_xs) - min(pad_xs), 2)
+    h = round(max(pad_ys) - min(pad_ys), 2)
+    return max(w, 2.0), max(h, 2.0)
 
 
 def parse(filepath):
@@ -66,35 +123,46 @@ def _get_board_dimensions(content):
     xs, ys = [], []
 
     for m in re.finditer(
-        r'\(gr_line[^)]*\(start\s+([\d.-]+)\s+([\d.-]+)\)[^)]*\(end\s+([\d.-]+)\s+([\d.-]+)\)[^)]*\(layer\s+"Edge\.Cuts"\)',
+        r'\(gr_line[^)]*\(start\s+([\d.-]+)\s+([\d.-]+)\)',
         content,
     ):
-        xs.extend([float(m.group(1)), float(m.group(3))])
-        ys.extend([float(m.group(2)), float(m.group(4))])
+        chunk = content[m.start(): m.start() + 1000]
+        end_m = re.search(r'\(end\s+([\d.-]+)\s+([\d.-]+)\)', chunk)
+        layer_m = re.search(r'\(layer\s+"?Edge\.Cuts"?\)', chunk)
+        if end_m and layer_m:
+            xs.extend([float(m.group(1)), float(end_m.group(1))])
+            ys.extend([float(m.group(2)), float(end_m.group(2))])
 
     for m in re.finditer(
-        r'\(gr_arc[^)]*\(start\s+([\d.-]+)\s+([\d.-]+)\)[^)]*\(mid\s+[\d.-]+\s+[\d.-]+\)[^)]*\(end\s+([\d.-]+)\s+([\d.-]+)\)[^)]*\(layer\s+"Edge\.Cuts"\)',
+        r'\(gr_arc[^)]*\(start\s+([\d.-]+)\s+([\d.-]+)\)',
         content,
     ):
-        xs.extend([float(m.group(1)), float(m.group(3))])
-        ys.extend([float(m.group(2)), float(m.group(4))])
+        chunk = content[m.start(): m.start() + 1000]
+        end_m = re.search(r'\(end\s+([\d.-]+)\s+([\d.-]+)\)', chunk)
+        layer_m = re.search(r'\(layer\s+"?Edge\.Cuts"?\)', chunk)
+        if end_m and layer_m:
+            xs.extend([float(m.group(1)), float(end_m.group(1))])
+            ys.extend([float(m.group(2)), float(end_m.group(2))])
 
     for m in re.finditer(
         r'\(gr_rect[^)]*\(start\s+([\d.-]+)\s+([\d.-]+)\)',
         content,
     ):
-        rest = content[m.end() : m.end() + 200]
-        end_m = re.search(r'\(end\s+([\d.-]+)\s+([\d.-]+)\)', rest)
-        layer_m = re.search(r'\(layer\s+"Edge\.Cuts"\)', rest)
+        chunk = content[m.start(): m.start() + 1000]
+        end_m = re.search(r'\(end\s+([\d.-]+)\s+([\d.-]+)\)', chunk)
+        layer_m = re.search(r'\(layer\s+"?Edge\.Cuts"?\)', chunk)
         if end_m and layer_m:
             xs.extend([float(m.group(1)), float(end_m.group(1))])
             ys.extend([float(m.group(2)), float(end_m.group(2))])
 
     if not xs:
-        return {"width": 100.0, "height": 60.0}
+        print("[PCB Parser] No Edge.Cuts geometry found, using defaults")
+        return {"width": 100.0, "height": 60.0, "x_min": 0.0, "y_min": 0.0, "x_max": 100.0, "y_max": 60.0}
 
     x_vals = [x for x in xs if not math.isnan(x) and not math.isinf(x)]
     y_vals = [y for y in ys if not math.isnan(y) and not math.isinf(y)]
+
+    print(f"[PCB Parser] Found outline bounds: x=({min(x_vals)}, {max(x_vals)}), y=({min(y_vals)}, {max(y_vals)})")
 
     return {
         "width": round(max(x_vals) - min(x_vals), 2),
@@ -109,15 +177,15 @@ def _get_board_dimensions(content):
 def _get_mounting_holes(content):
     holes = []
     seen = set()
+    # KiCad v7+ uses (footprint ...), v6 uses (module ...)
+    fp_pat = r'\((?:footprint|module)\s+(?:"([^"]*)"|([^\s(")]+))'
 
-    for m in re.finditer(
-        r'\(footprint\s+"([^"]*MountingHole[^"]*)"',
-        content,
-    ):
-        name = m.group(1)
-        # Find 'at' near this footprint
-        chunk = content[m.start() : m.start() + 500]
-        at_m = re.search(r'\(at\s+([\d.-]+)\s+([\d.-]+)', chunk)
+    for m in re.finditer(fp_pat, content):
+        name = m.group(1) or m.group(2)
+        if "MountingHole" not in name:
+            continue
+        block = _balanced_block(content, m.start())
+        at_m = re.search(r'\(at\s+([\d.-]+)\s+([\d.-]+)', block)
         if not at_m:
             continue
         x = round(float(at_m.group(1)), 2)
@@ -125,30 +193,38 @@ def _get_mounting_holes(content):
         if (x, y) in seen:
             continue
         seen.add((x, y))
-        dia = _extract_hole_diameter(name, chunk)
+        dia = _extract_hole_diameter(name, block)
         holes.append({"x": x, "y": y, "diameter": dia, "name": name})
 
-    # np_thru_hole pads that aren't MountingHole footprints
-    fp_iter = re.finditer(
-        r'\(footprint\s+"([^"]*)"',
-        content,
-    )
-    for m in fp_iter:
-        if "MountingHole" in m.group(1):
+    # np_thru_hole pads in non-MountingHole footprints — include only
+    # when the footprint has no signal pads (smd/thru_hole), which indicates
+    # the np_thru_holes are board-mount holes rather than component posts.
+    for m in re.finditer(fp_pat, content):
+        name = m.group(1) or m.group(2)
+        if "MountingHole" in name:
             continue
-        chunk = content[m.start() : m.start() + 1000]
-        at_m = re.search(r'\(at\s+([\d.-]+)\s+([\d.-]+)', chunk)
+        block = _balanced_block(content, m.start())
+        at_m = re.search(r'\(at\s+([\d.-]+)\s+([\d.-]+)', block)
         if not at_m:
             continue
         x = round(float(at_m.group(1)), 2)
         y = round(float(at_m.group(2)), 2)
         if (x, y) in seen:
             continue
-        pad_m = re.search(r'\(pad\s+"[^"]*"\s+np_thru_hole\s+circle[^)]*\(drill\s+([\d.-]+)\)', chunk)
-        if pad_m:
-            drill = round(float(pad_m.group(1)), 2)
+        # Skip footprints with signal pads (smd, thru_hole) — these are
+        # component mounting posts, not board mounting holes.
+        if re.search(r'\(pad\s+"[^"]*"\s+(?:smd|thru_hole)\s', block):
+            continue
+        # Find np_thru_hole pads with a drill hole
+        pad_start = re.search(r'\(pad\s+"[^"]*"\s+np_thru_hole\s+circle', block)
+        if not pad_start:
+            continue
+        pad_block = _balanced_block(block, pad_start.start())
+        dm = re.search(r'\(drill\s+([\d.-]+)\)', pad_block)
+        if dm:
+            drill = round(float(dm.group(1)), 2)
             seen.add((x, y))
-            holes.append({"x": x, "y": y, "diameter": drill, "name": m.group(1)})
+            holes.append({"x": x, "y": y, "diameter": drill, "name": name})
 
     return holes
 
@@ -171,22 +247,34 @@ def _get_components(content, dimensions):
     y_max = dimensions.get("y_max")
     has_edge = None not in (x_min, x_max, y_min, y_max)
 
-    fp_iter = re.finditer(r'\(footprint\s+"([^"]*)"', content)
+    # Use wider edge threshold for larger boards
+    board_diag = 0
+    if has_edge:
+        board_diag = math.sqrt((x_max - x_min)**2 + (y_max - y_min)**2)
+    edge_threshold = max(3.0, min(8.0, board_diag * 0.04))
+
+    # KiCad v7+: (footprint ...), KiCad v6: (module ...)
+    fp_pat = r'\((?:footprint|module)\s+(?:"([^"]*)"|([^\s(")]+))'
+    fp_iter = re.finditer(fp_pat, content)
     for m in fp_iter:
-        name = m.group(1)
+        name = m.group(1) or m.group(2)
         if "MountingHole" in name:
             continue
 
-        chunk = content[m.start() : m.start() + 800]
-        at_m = re.search(r'\(at\s+([\d.-]+)\s+([\d.-]+)\s*([\d.-]*)', chunk)
+        block = _balanced_block(content, m.start())
+        at_m = re.search(r'\(at\s+([\d.-]+)\s+([\d.-]+)(?:\s+([\d.-]+))?', block)
         if not at_m:
             continue
 
         x = round(float(at_m.group(1)), 2)
         y = round(float(at_m.group(2)), 2)
-        rotation = round(float(at_m.group(3))) if at_m.group(3).strip() else 0
-        ref = _extract_reference(chunk)
+        rot_str = at_m.group(3)
+        rotation = round(float(rot_str)) if rot_str and rot_str.strip() else 0
+        ref = _extract_reference(block)
         height = _get_height(name)
+
+        # Extract pad bounding box for width/length estimation
+        fpw, fpl = _parse_footprint_dimensions(block)
 
         comp = {
             "ref": ref,
@@ -195,12 +283,28 @@ def _get_components(content, dimensions):
             "y": y,
             "rotation": rotation,
             "height": height,
+            "width": fpw,
+            "length": fpl,
             "near_edge": False,
         }
 
+        is_conn = _is_connector_footprint(name)
+        if is_conn:
+            comp["connector"] = True
+        if is_conn and fpw is not None:
+            comp["connector_width"] = max(fpw, fpl)
+
         if has_edge:
-            dist = min(abs(x - x_min), abs(x - x_max), abs(y - y_min), abs(y - y_max))
-            comp["near_edge"] = dist < 3.0
+            dist_x_min = abs(x - x_min)
+            dist_x_max = abs(x - x_max)
+            dist_y_min = abs(y - y_min)
+            dist_y_max = abs(y - y_max)
+            dist = min(dist_x_min, dist_x_max, dist_y_min, dist_y_max)
+            comp["near_edge"] = dist < edge_threshold
+            # Store explicit face for edge connectors (reliable — no rotation guesswork)
+            if comp["near_edge"]:
+                edge_dists = {"W": dist_x_min, "E": dist_x_max, "S": dist_y_min, "N": dist_y_max}
+                comp["face"] = min(edge_dists, key=edge_dists.get)
 
         components.append(comp)
 
@@ -219,12 +323,16 @@ def _extract_reference(chunk):
 
 def _get_edge_connectors(components, dimensions):
     connectors = []
+    seen_refs = set()
     for c in components:
         is_near = c.get("near_edge", False)
-        is_connector = any(kw.lower() in c["name"].lower() for kw in CONNECTOR_KEYWORDS)
-        is_tall = c["height"] >= 2.0
-        if is_near and (is_connector or is_tall):
-            connectors.append(c)
+        is_connector = _is_connector_footprint(c["name"])
+        is_panel_mount = c.get("height", 0) >= 5.0 and is_connector
+        if is_near and (is_connector or is_panel_mount):
+            ref = c.get("ref", "?")
+            if ref not in seen_refs:
+                seen_refs.add(ref)
+                connectors.append(c)
     return connectors
 
 
@@ -259,6 +367,9 @@ def validate_board_data(data):
         for f in ("ref", "name", "x", "y", "height"):
             if f not in c:
                 warnings.append(f"Component #{i} missing field '{f}' — will use fallback value.")
+        for f in ("width", "length"):
+            if f in c and c[f] is not None and c[f] <= 0:
+                warnings.append(f"Component #{i} ('{c.get('ref','?')}') has {f}={c[f]} — likely mis-parsed.")
 
     # 4. Mounting holes fields
     for i, h in enumerate(data.get("mounting_holes", [])):
@@ -279,7 +390,6 @@ def validate_board_data(data):
 
 
 if __name__ == "__main__":
-    import sys
     test_files = [
         r"C:\Users\abdul\Downloads\PCB.kicad_pcb",
         r"C:\Users\abdul\Documents\PowerSupplyKit\PowerSupplyKit.kicad_pcb",
@@ -297,10 +407,14 @@ if __name__ == "__main__":
             tall = sorted(data["components"], key=lambda c: c["height"], reverse=True)[:5]
             for c in tall:
                 edge = " [EDGE]" if c.get("near_edge") else ""
-                print(f"  {c['ref']}: {c['name'][:50]} at ({c['x']},{c['y']}) h={c['height']}mm{edge}")
+                dims = ""
+                if c.get("width") and c.get("length"):
+                    dims = f" bb={c['width']}x{c['length']}mm"
+                print(f"  {c['ref']}: {c['name'][:50]} at ({c['x']},{c['y']}) rot={c['rotation']}° h={c['height']}mm{dims}{edge}")
             print(f"Edge connectors: {len(data['edge_connectors'])}")
             for c in data["edge_connectors"]:
-                print(f"  {c['ref']}: {c['name'][:50]} at ({c['x']},{c['y']}) h={c['height']}mm")
+                cw = c.get("connector_width", "?")
+                print(f"  {c['ref']}: {c['name'][:50]} at ({c['x']},{c['y']}) rot={c['rotation']}° h={c['height']}mm w={cw}mm")
         except Exception as e:
             import traceback
             print(f"Error parsing {fp}: {e}")

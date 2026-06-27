@@ -1,0 +1,62 @@
+"""FreeCAD parameterized design templates for OpenCode."""
+
+
+def render_template(name, overrides=None):
+    if name not in TEMPLATES:
+        raise KeyError(f"Unknown template: {name!r}")
+    if overrides is not None and not isinstance(overrides, dict):
+        raise TypeError(f"overrides must be a dict, got {type(overrides).__name__}")
+    tpl = TEMPLATES[name]
+    code = tpl["code"]
+    params = dict(TEMPLATE_SCHEMAS.get(name, {}))
+    if overrides:
+        params.update(overrides)
+    if params:
+        code = code.format(**params)
+    return code
+
+TEMPLATES = {
+    "bracket": {
+        "desc": "L-bracket with dynamic dimensions and hole placement",
+        "code": '"""```python\nimport FreeCAD\ndoc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument("Bracket")\n\nvh = {vert_height}\nhl = {horiz_length}\nw = {width}\nt = {thickness}\nhr = {hole_radius}\n\nvert = doc.addObject("Part::Box", "VerticalPlate")\nvert.Length, vert.Width, vert.Height = t, w, vh\n\nhoriz = doc.addObject("Part::Box", "HorizontalPlate")\nhoriz.Length, horiz.Width, horiz.Height = hl, t, w\nhoriz.Placement.Base = FreeCAD.Vector(0, -t, 0)\n\nfuse = doc.addObject("Part::MultiFuse", "BracketBody")\nfuse.Shapes = [vert, horiz]\n\nhole1 = doc.addObject("Part::Cylinder", "Hole1")\nhole1.Radius, hole1.Height = hr, t * 2\nhole1.Placement.Base = FreeCAD.Vector(-t/2, w * 0.25, vh * 0.5)\n\nhole2 = doc.addObject("Part::Cylinder", "Hole2")\nhole2.Radius, hole2.Height = hr, t * 2\nhole2.Placement.Base = FreeCAD.Vector(-t/2, w * 0.75, vh * 0.5)\n\nholes_union = doc.addObject("Part::MultiFuse", "HolesUnion")\nholes_union.Shapes = [hole1, hole2]\n\ncut = doc.addObject("Part::Cut", "Bracket")\ncut.Base = fuse\ncut.Tool = holes_union\n\nfor obj in [vert, horiz, fuse, hole1, hole2, holes_union]:\n    obj.ViewObject.Visibility = False\n\ndoc.recompute()\nFreeCAD.Gui.SendMsgToActiveView("ViewFit")\nprint("Parameterized Bracket created!")\n```"""',
+    },
+    "flange": {
+        "desc": "Circular flange with dynamic bolt array",
+        "code": '"""```python\nimport FreeCAD, math\ndoc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument("Flange")\n\nro = {outer_radius}\nri = {inner_radius}\nt = {thickness}\nnum_bolts = {num_bolts}\nrb = {bolt_radius}\npcd = ri + (ro - ri) / 2\n\nbase = doc.addObject("Part::Cylinder", "BaseRing")\nbase.Radius, base.Height = ro, t\n\ninner = doc.addObject("Part::Cylinder", "InnerHole")\ninner.Radius, inner.Height = ri, t + 2\ninner.Placement.Base = FreeCAD.Vector(0, 0, -1)\n\nbolt_shapes = [inner]\nfor i in range(num_bolts):\n    angle = (360.0 / num_bolts) * i\n    rad = math.radians(angle)\n    x, y = pcd * math.cos(rad), pcd * math.sin(rad)\n    bolt = doc.addObject("Part::Cylinder", f"BoltHole_{{i}}")\n    bolt.Radius, bolt.Height = rb, t + 2\n    bolt.Placement.Base = FreeCAD.Vector(x, y, -1)\n    bolt_shapes.append(bolt)\n\ncut_tools = doc.addObject("Part::MultiFuse", "CutTools")\ncut_tools.Shapes = bolt_shapes\n\nfinal_flange = doc.addObject("Part::Cut", "Flange")\nfinal_flange.Base = base\nfinal_flange.Tool = cut_tools\n\nbase.ViewObject.Visibility = False\ncut_tools.ViewObject.Visibility = False\nfor obj in bolt_shapes: obj.ViewObject.Visibility = False\n\ndoc.recompute()\nFreeCAD.Gui.SendMsgToActiveView("ViewFit")\nprint(f"Flange generated with {num_bolts} holes.")\n```"""',
+    },
+    "pipe": {
+        "desc": "Pipe with adjustable wall thickness and height",
+        "code": '"""```python\nimport FreeCAD\ndoc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument("Pipe")\n\nro = {outer_radius}\nt = {wall_thickness}\nh = {height}\n\nouter = doc.addObject("Part::Cylinder", "OuterPipe")\nouter.Radius, outer.Height = ro, h\n\ninner = doc.addObject("Part::Cylinder", "InnerPipe")\ninner.Radius, inner.Height = ro - t, h + 2\ninner.Placement.Base = FreeCAD.Vector(0, 0, -1)\n\npipe = doc.addObject("Part::Cut", "Pipe")\npipe.Base = outer\npipe.Tool = inner\n\nouter.ViewObject.Visibility = False\ninner.ViewObject.Visibility = False\n\ndoc.recompute()\nFreeCAD.Gui.SendMsgToActiveView("ViewFit")\nprint("Parametric Pipe created!")\n```"""',
+    },
+    "gear": {
+        "desc": "Spur gear via Part API involute construction with center bore",
+        "code": '"""```python\nimport FreeCAD, math, Part\n\ndoc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument("Gear")\n\nteeth = {num_teeth}\nmod = {module}\nh = {height}\nbore_r = {bore_radius}\n\npressure_angle = 20  # degrees\npitch_r = teeth * mod / 2\nbase_r = pitch_r * math.cos(math.radians(pressure_angle))\naddendum_r = pitch_r + mod\nadedendum_r = pitch_r - 1.25 * mod\ntooth_angle = 2 * math.pi / teeth\ninvolute_max = math.sqrt(max(0, addendum_r**2 - base_r**2)) / base_r\n\n\ndef involute_pt(r_base, t):\n    return FreeCAD.Vector(\n        r_base * (math.cos(t) + t * math.sin(t)),\n        r_base * (math.sin(t) - t * math.cos(t)), 0)\n\n\npts = []\nfor i in range(teeth):\n    off = i * tooth_angle\n    # Root start (right side of gap)\n    a_r0 = off - tooth_angle * 0.45\n    pts.append(FreeCAD.Vector(\n        adedendum_r * math.cos(a_r0), adedendum_r * math.sin(a_r0), 0))\n    # Right involute flank\n    for step in range(21):\n        t = step * involute_max / 20\n        p = involute_pt(base_r, t)\n        a = math.atan2(p.y, p.x) + off - tooth_angle * 0.25\n        r = math.sqrt(p.x**2 + p.y**2)\n        pts.append(FreeCAD.Vector(r * math.cos(a), r * math.sin(a), 0))\n    # Tip arc (addendum)\n    for step in range(11):\n        a = (off + tooth_angle * 0.2\n             + step * tooth_angle * 0.1 / 10)\n        pts.append(FreeCAD.Vector(\n            addendum_r * math.cos(a), addendum_r * math.sin(a), 0))\n    # Left involute flank (mirrored, top-down)\n    for step in range(21):\n        t = (20 - step) * involute_max / 20\n        p = involute_pt(base_r, t)\n        a = math.atan2(p.y, p.x) + off + tooth_angle * 0.25\n        r = math.sqrt(p.x**2 + p.y**2)\n        pts.append(FreeCAD.Vector(r * math.cos(a), r * math.sin(a), 0))\n    # Root end (left side of gap)\n    a_r1 = off + tooth_angle * 0.45\n    pts.append(FreeCAD.Vector(\n        adedendum_r * math.cos(a_r1), adedendum_r * math.sin(a_r1), 0))\n\nwire = Part.makePolygon(pts + [pts[0]])\nface = Part.Face(wire)\nsolid = face.extrude(FreeCAD.Vector(0, 0, h))\ngear_obj = Part.show(solid)\ngear_obj.Label = f"SpurGear_{{teeth}}t_m{{mod}}"\n\nif bore_r > 0:\n    bore = doc.addObject("Part::Cylinder", "Bore")\n    bore.Radius = bore_r\n    bore.Height = h + 2\n    bore.Placement.Base = FreeCAD.Vector(0, 0, -1)\n    cut = doc.addObject("Part::Cut", "SpurGear")\n    cut.Base = gear_obj\n    cut.Tool = bore\n    bore.ViewObject.Visibility = False\n\ndoc.recompute()\nFreeCADGui.SendMsgToActiveView("ViewFit")\nprint(f"Gear created: {{teeth}} teeth, module {{mod}}")\n```"""',
+    },
+    "sketch_box": {
+        "desc": "Box with sketched base + pad",
+        "code": '"""```python\nimport FreeCAD, Part, Sketcher\ndoc = FreeCAD.ActiveDocument\nif not doc: doc = FreeCAD.newDocument("SketchDesign")\nbody = doc.addObject("PartDesign::Body", "Body")\nbody.Label = "Main Body"\nsketch = body.newObject("Sketcher::SketchObject", "Sketch")\ngeo = []\ngeo.append(Part.LineSegment(FreeCAD.Vector(0,0), FreeCAD.Vector(100,0)))\ngeo.append(Part.LineSegment(FreeCAD.Vector(100,0), FreeCAD.Vector(100,60)))\ngeo.append(Part.LineSegment(FreeCAD.Vector(100,60), FreeCAD.Vector(0,60)))\ngeo.append(Part.LineSegment(FreeCAD.Vector(0,60), FreeCAD.Vector(0,0)))\nsketch.addGeometry(geo)\ncon = []\ncon.append(Sketcher.Constraint(\'Coincident\', 0, 2, 1, 1))\ncon.append(Sketcher.Constraint(\'Coincident\', 1, 2, 2, 1))\ncon.append(Sketcher.Constraint(\'Coincident\', 2, 2, 3, 1))\ncon.append(Sketcher.Constraint(\'Coincident\', 3, 2, 0, 1))\ncon.append(Sketcher.Constraint(\'DistanceX\', 0, 2, 100.0))\ncon.append(Sketcher.Constraint(\'DistanceY\', 1, 2, 60.0))\ncon.append(Sketcher.Constraint(\'DistanceX\', 0, 1, 0.0))\ncon.append(Sketcher.Constraint(\'DistanceY\', 0, 1, 0.0))\nsketch.addConstraint(con)\ndoc.recompute()\npad = body.newObject("PartDesign::Pad", "Pad")\npad.Profile = sketch\npad.Length = 30\npad.Label = "Pad"\ndoc.recompute()\nFreeCAD.Gui.SendMsgToActiveView("ViewFit")\nprint("Sketched box with pad created!")\n```"""',
+    },
+    "triangle": {
+        "desc": "Isosceles triangle by vertex angle and height",
+        "code": '"""```python\nimport FreeCAD, math, Draft\n\nangle = {angle}\nheight = {height}\n\nfrom math import cos, sin, tan, radians\n\nhypo = height / cos(radians(angle / 2))\nbase = (tan(radians(angle / 2)) * height) * 2\n\ndef _pt(x1, y1, z1, length, angle2):\n    return (x1 + length * cos(radians(angle2)),\n            y1 + length * sin(radians(angle2)), z1)\n\n# Vertex at origin, isosceles triangle symmetric about X axis\napex = _pt(0, 0, 0, 0, angle)          # (0, 0, 0)\npt_a = _pt(0, 0, 0, hypo, -(angle/2))  # right base corner\npt_b = _pt(pt_a[0], pt_a[1], pt_a[2], abs(pt_a[1]) * 2, 90.0)  # left base corner\n\nDraft.makeWire([\n    FreeCAD.Vector(apex),\n    FreeCAD.Vector(pt_a),\n    FreeCAD.Vector(pt_b),\n], closed=True, face=True, support=None)\n\nApp.ActiveDocument.recompute()\nFreeCADGui.SendMsgToActiveView("ViewFit")\nprint(f"Triangle created: angle={angle}\u00b0 height={height} base={{base:.1f}} hypo={{hypo:.1f}}")\n```"""',
+    },
+    "curvedshapes": {
+        "desc": "Tapered wing section via CurvedShapes workbench",
+        "code": '"""```python\nimport FreeCAD, Draft, math\ndoc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument("CurvedWing")\n\nspan = {span}\nchord = {chord}\ncount = {count}\n\n# NACA-like profile points (root, Y=0 in XZ plane)\ndef naca_points(c, span_pos):\n    pts = []\n    for i in range(21):\n        t = i / 20.0\n        x = t * c\n        z = 0.12 * c * (0.2969 * t**0.5 - 0.1260 * t - 0.3516 * t**2 + 0.2843 * t**3 - 0.1015 * t**4)\n        pts.append(FreeCAD.Vector(x, span_pos, z))\n    bottom = [FreeCAD.Vector(p.x, span_pos, -p.z) for p in reversed(pts)]\n    return pts + bottom[1:]\n\nroot_wire = Draft.makeBSpline(naca_points(chord, 0), closed=True)\ntip_wire = Draft.makeBSpline(naca_points(chord * 0.4, span), closed=True)\n\n# Section profile to array (small rectangle)\nprofile = Draft.makeRectangle(2, 2)\nprofile.Placement.Base = FreeCAD.Vector(chord * 0.25, 0, -1)\n\nimport CurvedShapes\nblade = CurvedShapes.makeCurvedArray(\n    Base=profile,\n    Hullcurves=[root_wire, tip_wire],\n    Axis=FreeCAD.Vector(0, 1, 0),\n    Items=count,\n    Surface=True,\n    Solid=True,\n)\ndoc.recompute()\nFreeCADGui.activateWorkbench("CurvedShapesWorkbench")\nFreeCADGui.SendMsgToActiveView("ViewFit")\nprint(f"Curved wing created: span={span} chord={chord} count={count}")\n```"""',
+    },
+    "addfc": {
+        "desc": "Launch addFC add-on manager GUI or install a workbench",
+        "code": '"""```python\nimport FreeCAD, os, urllib.request\n\ndoc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument("AddFC")\n\n# addFC macro path\nmacro_dir = FreeCAD.getUserMacroDir(True)\nadfc_path = os.path.join(macro_dir, "addFC.FCMacro")\n\nif not os.path.exists(adfc_path):\n    # Download addFC from trusted source\n    url = "https://raw.githubusercontent.com/triplus/Add/master/addFC.FCMacro"\n    print("addFC.FCMacro not found \u2014 downloading from:", url)\n    try:\n        urllib.request.urlretrieve(url, adfc_path)\n        print("Downloaded to:", adfc_path)\n    except Exception as e:\n        print("Download failed:", e)\n        print("Please download manually from github.com/triplus/Add")\n        raise RuntimeError("addFC macro not found and download failed")\n\n# Execute addFC macro\nwith open(adfc_path) as f:\n    exec(f.read())\n\ndoc.recompute()\nFreeCADGui.SendMsgToActiveView("ViewFit")\nprint("addFC add-on manager launched.")\n```"""',
+    },
+}
+
+TEMPLATE_SCHEMAS = {
+    "bracket": {"vert_height": 120, "horiz_length": 80, "width": 80, "thickness": 10, "hole_radius": 6},
+    "flange": {"outer_radius": 100, "inner_radius": 60, "thickness": 20, "num_bolts": 6, "bolt_radius": 10},
+    "pipe": {"outer_radius": 50, "wall_thickness": 10, "height": 200},
+    "gear": {"num_teeth": 20, "module": 1.0, "height": 10, "bore_radius": 6},
+    "sketch_box": {},
+    "triangle": {"angle": 90, "height": 50},
+    "curvedshapes": {"span": 50.0, "chord": 100.0, "count": 20},
+    "addfc": {},
+}

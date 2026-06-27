@@ -1,5 +1,7 @@
 # compat.py — PySide2/PySide6 compatibility shim
-import sys as _sys
+# Uses FreeCADGui.qt_binding to detect the correct binding instead of
+# unreliable try/except import order.
+
 
 class _DummyQt:
     class Qt:
@@ -25,16 +27,34 @@ class _DummyQt:
     class QWidget:
         pass
 
-try:
-    from PySide6 import QtWidgets, QtCore, QtGui
-    from PySide6.QtCore import Qt, Signal
-except ImportError:
+
+def _detect_qt():
     try:
-        from PySide2 import QtWidgets, QtCore, QtGui
-        from PySide2.QtCore import Qt, Signal
+        import FreeCADGui
+        binding = getattr(FreeCADGui, 'qt_binding', None)
+        if binding == 'PySide2':
+            from PySide2 import QtWidgets, QtCore, QtGui
+            from PySide2.QtCore import Qt, Signal
+            return QtWidgets, QtCore, QtGui, Qt, Signal
+        if binding == 'PySide6':
+            from PySide6 import QtWidgets, QtCore, QtGui
+            from PySide6.QtCore import Qt, Signal
+            return QtWidgets, QtCore, QtGui, Qt, Signal
     except ImportError:
-        QtWidgets = _DummyQt()
-        QtCore = _DummyQt()
-        QtGui = _DummyQt()
-        Qt = _DummyQt.Qt()
-        Signal = lambda x: (lambda f: f)
+        pass
+    # Fallback: cascade try/except (legacy FreeCAD versions without qt_binding)
+    try:
+        from PySide6 import QtWidgets, QtCore, QtGui
+        from PySide6.QtCore import Qt, Signal
+        return QtWidgets, QtCore, QtGui, Qt, Signal
+    except ImportError:
+        try:
+            from PySide2 import QtWidgets, QtCore, QtGui
+            from PySide2.QtCore import Qt, Signal
+            return QtWidgets, QtCore, QtGui, Qt, Signal
+        except ImportError:
+            pass
+    return _DummyQt(), _DummyQt(), _DummyQt(), _DummyQt.Qt(), lambda x: (lambda f: f)
+
+
+QtWidgets, QtCore, QtGui, Qt, Signal = _detect_qt()
