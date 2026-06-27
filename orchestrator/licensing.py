@@ -15,7 +15,7 @@ from urllib.error import URLError
 # ── Cloudflare Worker endpoint (set this after deploying) ──────────
 # Format: https://<your-worker>.<your-subdomain>.workers.dev
 SERVER_URL = "https://ai-companion-licensing.usayeed10.workers.dev"
-BUY_URL = SERVER_URL + "/checkout"
+BUY_URL = SERVER_URL + "/checkout?plan=yearly"
 CACHE_TTL_DAYS = 7
 
 # ── key format ─────────────────────────────────────────────────────

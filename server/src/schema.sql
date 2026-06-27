@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS licenses (
     email TEXT NOT NULL,
     payer_name TEXT DEFAULT '',
     txn_id TEXT UNIQUE,
+    plan TEXT DEFAULT 'monthly',
     max_activations INTEGER DEFAULT 3,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT

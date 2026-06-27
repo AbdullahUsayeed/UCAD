@@ -3,7 +3,13 @@ main = "src/index.js"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
 
+# ── D1 Database (run `npx wrangler d1 create licensing-db` to get the ID) ──
 [[d1_databases]]
 binding = "DB"
 database_name = "licensing-db"
 database_id = ""
+
+# ── PayPal Live Secret (set via `npx wrangler secret put PAYPAL_CLIENT_SECRET`) ──
+# The Client ID is embedded in the frontend (public).
+# The Secret must be set as a secret, NOT in this file:
+#   npx wrangler secret put PAYPAL_CLIENT_SECRET
