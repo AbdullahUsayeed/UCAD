@@ -6,7 +6,7 @@ CAD should not require a manual.
 
 ## The Problem
 
-A brilliant engineer had a hardware product ready to launch. The circuit boards were done. The firmware was done. Then he opened a CAD tool.
+A young engineer had a hardware product ready to launch. The circuit boards were done. The firmware was done. Then he opened a CAD tool.
 
 Months passed. The product never shipped.
 
