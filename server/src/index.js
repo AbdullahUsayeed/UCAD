@@ -187,7 +187,7 @@ paypal_sdk.Buttons({
         const p = planData[selectedPlan];
         return actions.order.create({
             purchase_units: [{
-                description: PRODUCT_NAME + ' - ' + p.label,
+                description: \`${PRODUCT_NAME} - \${p.label}\`,
                 amount: { value: p.price }
             }],
             application_context: { shipping_preference: 'NO_SHIPPING' }
