@@ -1,7 +1,7 @@
 """
-vision_pipeline.py  (updated -- uses LiteLLM)
------------------------------------------------------------
-Sends a PCB render PNG to a vision-capable model via LiteLLM
+vision_pipeline.py
+-------------------
+Sends a PCB render PNG to a vision-capable model via direct HTTP
 with a structured recognition guide so the model knows exactly
 what components to look for and how to report them.
 """
@@ -17,7 +17,7 @@ try:
 except Exception:
     _RECOGNITION_GUIDE = ""
 
-_DEEPSEEK_VISION_MODEL = "deepseek/deepseek-v4-flash"
+_DEEPSEEK_VISION_MODEL = "deepseek-v4-flash"
 _DEEPSEEK_VISION_URL = "https://api.deepseek.com"
 
 _VISION_SYSTEM_PROMPT = f"""\
@@ -57,7 +57,7 @@ def analyse_pcb_image(
 
     png_b64 = _encode_image(png_path)
     payload = _build_payload(png_b64)
-    response = _post_litellm(payload, key, timeout)
+    response = _post_direct(payload, key, timeout)
     return _extract_text(response)
 
 
@@ -88,33 +88,26 @@ def _build_payload(png_b64: str) -> dict:
     }
 
 
-def _post_litellm(payload: dict, api_key: str, timeout: int) -> dict:
+def _post_direct(payload: dict, api_key: str, timeout: int) -> dict:
     """
-    Send a vision request to the model via LiteLLM.
+    Send a vision request to the model via direct HTTP POST.
     Returns the raw response dict (OpenAI-compatible format).
     """
-    import litellm
+    import json as _json, urllib.request as _ur
 
-    kwargs = {
-        "model": payload["model"],
-        "messages": payload["messages"],
-        "max_tokens": payload.get("max_tokens", 1024),
-        "api_key": api_key,
-        "api_base": _DEEPSEEK_VISION_URL,
-        "stream": False,
-        "timeout": timeout,
-    }
+    body = _json.dumps(payload).encode()
 
-    resp = litellm.completion(**kwargs)
-    return {
-        "choices": [
-            {
-                "message": {
-                    "content": resp.choices[0].message.content or ""
-                }
-            }
-        ]
-    }
+    req = _ur.Request(
+        _DEEPSEEK_VISION_URL + "/chat/completions",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    resp = _ur.urlopen(req, timeout=timeout)
+    return _json.loads(resp.read().decode())
 
 
 def _extract_text(response: dict) -> str:

@@ -75,23 +75,59 @@ This is not vibe-coded. Every bug listed below was caught by the test suite befo
 
 **Tools → Addon Manager → Workbenches → Search "UCAD" → Install → Restart**
 
-Dependencies (ezdxf, shapely) install automatically.
+Dependencies (`ezdxf`, `shapely`) install automatically via the post-install script. If that fails, see Option B step 3.
 
 ### Option B — Manual
 
+**1. Download the repo**
+
 ```bash
 git clone https://github.com/AbdullahUsayeed/UCAD.git
-# Move to FreeCAD Mod directory:
-# Windows:  %APPDATA%\FreeCAD\v1-1\Mod\
-# Linux:    ~/.local/share/FreeCAD/Mod/
-# macOS:    ~/Library/Preferences/FreeCAD/Mod/
+```
+Or download the ZIP from [github.com/AbdullahUsayeed/UCAD](https://github.com/AbdullahUsayeed/UCAD) and extract it.
+
+**2. Place it in FreeCAD's Mod folder**
+
+Copy the `UCAD` folder into your FreeCAD user Mod directory:
+
+| OS | Path |
+|----|------|
+| **Windows** | `%APPDATA%\FreeCAD\v1-1\Mod\` (create `Mod` if missing) |
+| **Linux** | `~/.local/share/FreeCAD/Mod/` |
+| **macOS** | `~/Library/Application Support/FreeCAD/Mod/` |
+
+Final layout must be:
+```
+Mod/
+  AICompanion/
+    Init.py          ← required for FreeCAD discovery
+    InitGui.py
+    package.xml
+    ...
 ```
 
-Then install dependencies:
+**3. Install Python dependencies**
+
+Open a terminal and run:
 
 ```bash
-"C:\Program Files\FreeCAD 1.1\bin\python.exe" -m pip install -r requirements.txt
+# Windows (FreeCAD 1.1):
+"C:\Program Files\FreeCAD 1.1\bin\python.exe" -m pip install -r "<ModPath>\AICompanion\requirements.txt"
+
+# Linux:
+/path/to/freecad-python -m pip install -r ~/.local/share/FreeCAD/Mod/AICompanion/requirements.txt
 ```
+
+Required packages: `ezdxf` (DXF processing), `shapely` (2D geometry).  
+Optional: `keyring` + `cryptography` (secret storage on Linux/macOS).
+
+**4. Restart FreeCAD**
+
+Launch FreeCAD. Select **UCAD Assistant** from the workbench dropdown (top-left, next to Part Design / Part).
+
+**5. Open the sidebar**
+
+Click the UCAD Assistant workbench, or use `Ctrl+Shift+A`. The AI copilot panel opens on the right. Enter your API key in Settings and start designing.
 
 ## Quick Start
 
@@ -127,7 +163,6 @@ Then install dependencies:
 
 | Package | Required | Purpose |
 |---------|----------|---------|
-| `litellm` | Yes | Unified LLM API |
 | `ezdxf` | Yes | DXF processing |
 | `shapely` | Yes | 2D geometry |
 | `keyring` | No | Linux/macOS secret storage |
