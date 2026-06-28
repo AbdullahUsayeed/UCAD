@@ -1,13 +1,14 @@
 # InitGui.py - FreeCAD AI Companion Workbench V4
+import sys as _sys, os as _os, FreeCAD, FreeCADGui
+try: __file__
+except NameError: __file__ = _os.path.join(FreeCAD.getUserAppDataDir(), "Mod", "AICompanion", "InitGui.py")
+_ADDON_DIR = _os.path.dirname(_os.path.abspath(__file__))
+
 # Bootstrap vendored dependencies — must be first
-import sys as _sys
-import os as _os
-_deps_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".python-deps")
+_deps_dir = _os.path.join(_ADDON_DIR, ".python-deps")
 if _os.path.isdir(_deps_dir) and _deps_dir not in _sys.path:
     _sys.path.insert(0, _deps_dir)
-del _deps_dir, _sys, _os
-
-import FreeCAD, FreeCADGui
+del _deps_dir
 __version__ = "1.0.0"
 
 # ── Verify critical dependencies are available ────────────
@@ -23,12 +24,16 @@ if _MISSING_DEPS:
         "Run this in your terminal to install:\n"
     )
     if _os.name == "nt":
-        _msg += '  "C:\\Program Files\\FreeCAD 1.1\\bin\\python.exe" -m pip install -r "' + _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "requirements.txt") + '"\n'
+        _msg += (
+            '  "C:\\Program Files\\FreeCAD 1.1\\bin\\python.exe" -m pip install -r "'
+            + _os.path.join(_ADDON_DIR, "requirements.txt") + '"\n'
+        )
     else:
-        _msg += "  pip install -r " + _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "requirements.txt") + "\n"
+        _msg += "  pip install -r " + _os.path.join(_ADDON_DIR, "requirements.txt") + "\n"
     _msg += "Or run: python tools/update_deps.py"
     FreeCAD.Console.PrintError(f"[AICompanion] {_msg}\n")
-del _MISSING_DEPS, _pkg, _msg
+    del _msg
+del _MISSING_DEPS, _pkg
 
 # ── Startup noise suppression ────────────────────────────
 # External addons (ConstraintDesign, KiCadStepUp, etc.) may emit Python

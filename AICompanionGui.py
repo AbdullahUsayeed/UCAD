@@ -567,6 +567,7 @@ class AISidebar(QtWidgets.QWidget):
         # Load configuration & build initial orchestrator
         self.load()
         self._rebuild()
+        self._pcb_widget.set_vision_info(model=self.c_model or "", api_key=getattr(self, "api_key", "") or "")
 
         # Clear any stale history — each session is fresh
         if self.orch:
@@ -749,6 +750,8 @@ class AISidebar(QtWidgets.QWidget):
         self._rebuild()
         display = entry.get("display") or entry.get("model") or "Default"
         self.msg("System", f"Model: **{display}**")
+        if hasattr(self, "_pcb_widget"):
+            self._pcb_widget.set_vision_info(model=self.c_model, api_key=getattr(self, "api_key", "") or "")
 
     def _on_refresh_models(self):
         provider = self._current_provider()
@@ -2332,29 +2335,41 @@ class AISidebar(QtWidgets.QWidget):
         vision_description = None
         pcb_path = getattr(self._pcb_widget, "_board_path", None)
         api_key = getattr(self, "api_key", None) or ""
-        if pcb_path and api_key:
+        model = getattr(self, "c_model", "") or ""
+
+        from pcb_vision_deps import get_vision_deps_status, get_vision_deps_message, VisionDeps
+        status = get_vision_deps_status(api_key=api_key, model=model)
+        if status != VisionDeps.OK:
+            msg = get_vision_deps_message(status)
+            self.msg("System", msg, chat=True)
+        else:
             self.msg("System", "\U0001f4f7 Analysing PCB render with vision AI\u2026", chat=True)
-            from threading import Thread
-            _result = [None]
-            _exc_info = [None]
-            def _run_vision():
-                try:
-                    from kicad_renderer import render_pcb_png
-                    from vision_pipeline import analyse_pcb_image
-                    png_path = render_pcb_png(pcb_path)
-                    FreeCAD.Console.PrintMessage(f"[vision] PNG rendered: {png_path}\n")
-                    _result[0] = analyse_pcb_image(png_path, api_key=api_key)
-                    FreeCAD.Console.PrintMessage(f"[vision] Analysis ({len(_result[0])} chars)\n")
-                except Exception as e:
-                    _exc_info[0] = e
-            t = Thread(target=_run_vision, daemon=True)
-            t.start()
-            while t.is_alive():
-                QtWidgets.QApplication.processEvents()
-                t.join(timeout=0.05)
-            if _exc_info[0] is not None:
-                raise _exc_info[0]
-            vision_description = _result[0]
+            try:
+                from threading import Thread
+                _result = [None]
+                _exc_info = [None]
+                def _run_vision():
+                    try:
+                        from kicad_renderer import render_pcb_png
+                        from vision_pipeline import analyse_pcb_image
+                        png_path = render_pcb_png(pcb_path)
+                        FreeCAD.Console.PrintMessage(f"[vision] PNG rendered: {png_path}\n")
+                        _result[0] = analyse_pcb_image(png_path, api_key=api_key)
+                        FreeCAD.Console.PrintMessage(f"[vision] Analysis ({len(_result[0])} chars)\n")
+                    except Exception as e:
+                        _exc_info[0] = e
+                t = Thread(target=_run_vision, daemon=True)
+                t.start()
+                while t.is_alive():
+                    QtWidgets.QApplication.processEvents()
+                    t.join(timeout=0.05)
+                if _exc_info[0] is not None:
+                    raise _exc_info[0]
+                vision_description = _result[0]
+            except RuntimeError as e:
+                self.msg("System", f"\u26a0\ufe0f Vision failed: {e} — continuing without vision.", chat=True)
+            except Exception as e:
+                self.msg("System", f"\u26a0\ufe0f Vision error: {e} — continuing without vision.", chat=True)
         # ────────────────────────────────────────────────────────────────────
 
         from context_injector import build_ai_context

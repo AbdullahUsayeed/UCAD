@@ -10,7 +10,13 @@ class PcbInputWidget(QtWidgets.QWidget):
         self.orch = orch
         self._board_path = None
         self._board_data = None
+        self._vision_model = ""
+        self._vision_api_key = ""
         self._build_ui()
+
+    def set_vision_info(self, model: str = "", api_key: str = ""):
+        self._vision_model = model
+        self._vision_api_key = api_key
 
     def set_orch(self, orch):
         self.orch = orch
@@ -323,9 +329,24 @@ class PcbInputWidget(QtWidgets.QWidget):
 
         pcb_area = dims["width"] * dims["height"]
 
+        # Vision status indicator
+        try:
+            from pcb_vision_deps import get_vision_deps_status, get_vision_deps_message, VisionDeps
+            _vstatus = get_vision_deps_status(api_key=self._vision_api_key, model=self._vision_model)
+            if _vstatus == VisionDeps.OK:
+                _vdot = '<span style="color:#22c55e;font-size:14px;">\u25cf</span> <span style="color:#8b949e;font-size:10px;">Vision ready</span>'
+            else:
+                _vmsg = get_vision_deps_message(_vstatus)
+                _vdot = (
+                    '<span style="color:#eab308;font-size:14px;">\u25cf</span> '
+                    '<span style="color:#8b949e;font-size:10px;" title="{}">Vision unavailable</span>'
+                ).format(_vmsg.replace('"', "&quot;"))
+        except Exception:
+            _vdot = ""
+
         summary = [
-            f"<b style='color:#58a6ff;'>✓ {os.path.basename(self._board_path)} loaded</b><br>",
-            f"Board: {dims['width']} x {dims['height']} mm ({pcb_area:.0f}mm²)",
+            f"<b style='color:#58a6ff;'>\u2713 {os.path.basename(self._board_path)} loaded</b> {_vdot}<br>",
+            f"Board: {dims['width']} \u00d7 {dims['height']} mm ({pcb_area:.0f}mm\u00b2)",
             f"Mounting holes: {len(holes)}",
             f"Edge connectors: {len(connectors)}",
         ]
