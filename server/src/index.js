@@ -217,8 +217,18 @@ paypal_sdk.Buttons({
         });
     },
     onError: function(err) {
+        const errorStr = err.toString();
+        
+        // Check if the user just closed the window manually
+        if (errorStr.includes("Detected popup close")) {
+            // Handle gracefully without breaking the layout
+            console.log("User closed the checkout popup window.");
+            return; 
+        }
+        
+        // Keep this for actual fatal/network errors
         document.getElementById('paypal-button-container').innerHTML =
-            '<div class="error">PayPal error: ' + err.toString() + '</div>';
+            '<div class="error">PayPal error: ' + errorStr + '</div>';
     }
 }).render('#paypal-button-container');
 </script>
