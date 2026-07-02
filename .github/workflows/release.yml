@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Vendor dependencies into .python-deps/
+        run: |
+          python tools/update_deps.py
+
+      - name: Install PyArmor
+        run: |
+          pip install pyarmor
+          pyarmor --version
+
+      - name: Build obfuscated release package
+        run: |
+          python tools/package_release.py
+
+      - name: Get version from package.xml
+        id: version
+        shell: pwsh
+        run: |
+          $ver = Select-Xml -Path package.xml -XPath "//version" | Select-Object -ExpandProperty Node | Select-Object -ExpandProperty InnerText
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+          echo "zip_name=UCAD-$ver.zip" >> $env:GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: UCAD Assistant ${{ github.ref_name }}
+          body: |
+            ## UCAD Assistant ${{ github.ref_name }}
+
+            ### Install
+            1. Download `UCAD-${{ steps.version.outputs.version }}.zip`
+            2. Extract the zip
+            3. Double-click `install.bat`
+            4. Restart FreeCAD
+            5. Activate the **UCAD Assistant** workbench
+
+            ### Changelog
+            See commits for details.
+          files: UCAD-${{ steps.version.outputs.version }}.zip
+          draft: true
