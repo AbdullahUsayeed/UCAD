@@ -4,6 +4,10 @@ try: __file__
 except NameError: __file__ = _os.path.join(FreeCAD.getUserAppDataDir(), "Mod", "AICompanion", "InitGui.py")
 _ADDON_DIR = _os.path.dirname(_os.path.abspath(__file__))
 
+# Detect launcher launch
+if _os.environ.get("UCAD_LAUNCHED"):
+    FreeCAD.Console.PrintLog("[UCAD] Launched by UCAD Launcher\n")
+
 # Bootstrap vendored dependencies — must be first
 _deps_dir = _os.path.join(_ADDON_DIR, ".python-deps")
 if _os.path.isdir(_deps_dir) and _deps_dir not in _sys.path:

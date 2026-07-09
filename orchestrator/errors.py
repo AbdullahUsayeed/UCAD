@@ -191,6 +191,29 @@ _ERROR_CATALOGUE: list[dict] = [
         ),
     },
     {
+        "pattern": r"SKETCH CONSTRAINT ERROR|references geo index",
+        "report": ErrorReport(
+            category="sketch_validation",
+            title="Sketch constraint references invalid geometry index",
+            fix=(
+                "Add ALL geometry BEFORE adding constraints. "
+                "Geo indices are 0-based and refer to the ORDER geometry was added. "
+                "If an addConstraint call references geo index 0 but no addGeometry "
+                "has been called yet, the index is out of range.\n\n"
+                "CORRECT ORDER:\n"
+                "  1. sketch.addGeometry(geo_list, False)  — first\n"
+                "  2. sketch.addConstraint(con_list)       — second\n\n"
+                "Geo index 0 = first element added, index 1 = second, etc."
+            ),
+            example=(
+                "geo_list = [Part.LineSegment(p1, p2), Part.LineSegment(p2, p3)]\n"
+                "sketch.addGeometry(geo_list, False)\n"
+                "con_list = [Sketcher.Constraint('Coincident', 0, 2, 1, 1)]\n"
+                "sketch.addConstraint(con_list)"
+            ),
+        ),
+    },
+    {
         "pattern": r"Sketch.*invalid|sketch.*constraint|open.*wire|not.*closed",
         "report": ErrorReport(
             category="sketch_open_profile",
@@ -435,6 +458,18 @@ def _highlight_bad_lines(code: str, report: ErrorReport) -> str:
 
 def _fallback_strategy_for_category(category: str, user_input: str) -> str:
     strategies = {
+        "sketch_validation": (
+            "You are adding constraints BEFORE adding geometry, or referencing "
+            "geo indices that don't exist yet.\n\n"
+            "FIX: Add ALL geometry FIRST, then ALL constraints SECOND:\n"
+            "  # Step 1 — collect all geometry\n"
+            "  geo_list = [Part.LineSegment(p1, p2), Part.LineSegment(p2, p3)]\n"
+            "  sketch.addGeometry(geo_list, False)\n"
+            "  # Step 2 — collect all constraints\n"
+            "  con_list = [Sketcher.Constraint('Coincident', 0, 2, 1, 1)]\n"
+            "  sketch.addConstraint(con_list)\n\n"
+            "Geo index 0 = first element in geo_list, index 1 = second, etc."
+        ),
         "sketch_open_profile": (
             "Use the PAD+FILLET pattern instead of sketching arcs:\n"
             "1. Sketch a simple rectangle (4 LineSegments + 4 Coincident constraints)\n"

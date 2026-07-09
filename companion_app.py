@@ -32,7 +32,27 @@ class CodeWorker(QtCore.QObject):
             def _on_token(text, typ):
                 if not self._cancel:
                     self.stream.emit(text, typ)
+            import time as _time
+            _t0 = _time.time()
+            try:
+                import FreeCAD as _fc
+                _fc.Console.PrintLog(
+                    f"[AIC] Worker gen={self._gen} provider={self._provider} "
+                    f"api_msgs={'EMPTY' if not self.api_msgs else str(len(self.api_msgs)) + ' msgs'}\n"
+                )
+            except Exception:
+                pass
             raw, code, used_api = self.orch.generate_code_safe(self.api_msgs, self.user_input, stream_callback=_on_token)
+            _elapsed = _time.time() - _t0
+            try:
+                import FreeCAD as _fc2
+                _fc2.Console.PrintLog(
+                    f"[AIC] Worker done in {_elapsed:.2f}s: "
+                    f"raw_len={len(raw or '')} code_len={len(code or '')} used_api={used_api} "
+                    f"fallback={'YES' if not code and raw is not None else 'NO'}\n"
+                )
+            except Exception:
+                pass
             if not code:
                 code = self.orch.get_fallback_code(self.user_input, self.mid_plan)
                 used_api = False

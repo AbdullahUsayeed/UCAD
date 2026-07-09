@@ -1,15 +1,15 @@
 """AI provider definitions — LiteLLM unified adapter for all providers."""
 
-import json, os, sys
+import json, os, sys, time
 import FreeCAD
 
 # ── Provider default model strings (LiteLLM format: "provider_prefix/model_name") ──
 
 PROVIDERS = {
-    "deepseek":   "deepseek/deepseek-chat",
+    "deepseek":   "deepseek/deepseek-v4-flash",
     "openai":     "openai/gpt-4o-mini",
     "ollama":     "ollama/llama3",
-    "anthropic":  "anthropic/claude-sonnet-4-20250514",
+    "anthropic":  "anthropic/claude-sonnet-5",
     "google":     "gemini/gemini-2.5-pro-exp-03-25",
     "xai":        "xai/grok-2",
     "mistral":    "mistral/mistral-large-2501",
@@ -20,6 +20,7 @@ PROVIDERS = {
     "together":   "together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo",
     "fireworks":  "fireworks_ai/accounts/fireworks/models/llama-v3p3-70b-instruct",
     "github":     "github/gpt-4o",
+    "moonshot":   "moonshot/moonshot-v1-8k",
 }
 
 _PROVIDER_NAMES = {
@@ -37,6 +38,7 @@ _PROVIDER_NAMES = {
     "together": "Together",
     "fireworks": "Fireworks",
     "github": "GitHub Models",
+    "moonshot": "Moonshot (Kimi)",
     "templates": "Templates",
 }
 
@@ -54,6 +56,7 @@ PROVIDER_HELP_URLS = {
     "together": "https://api.together.xyz/settings/api-keys",
     "fireworks": "https://app.fireworks.ai/settings/users/api-keys",
     "github": "https://github.com/settings/tokens",
+    "moonshot": "https://platform.moonshot.cn/console/api-keys",
 }
 
 PROVIDER_TUNING = {
@@ -71,6 +74,7 @@ PROVIDER_TUNING = {
     "together":   {"max_retries": 6, "style_hint": "",                              "max_tokens": 16384, "temperature": 0.7},
     "fireworks":  {"max_retries": 6, "style_hint": "",                              "max_tokens": 16384, "temperature": 0.7},
     "github":     {"max_retries": 5, "style_hint": "",                              "max_tokens": 16384, "temperature": 0.7},
+    "moonshot":   {"max_retries": 5, "style_hint": "",                              "max_tokens": 16384, "temperature": 0.7},
 }
 
 _DEFAULT_TUNING = {"max_retries": 5, "style_hint": "", "max_tokens": 16384, "temperature": 0.7}
@@ -195,6 +199,326 @@ def _direct_completion(model, messages, api_key, api_url=None,
     return full_text
 
 
+# ── Per-provider configs for model discovery ─────────────────────
+# Each entry defines:
+#   models_url  — full URL to the models endpoint (used as-is when no api_url override)
+#   auth_header — callable(api_key) → dict of headers (empty dict if api_key is empty)
+#   env_key     — env var name to check for a configured key (None = not needed)
+#   models_path — alternative path suffix for deriving URL from api_url (default /v1/models)
+
+PROVIDER_CONFIGS: dict = {
+    "anthropic": {
+        "models_url": "https://api.anthropic.com/v1/models",
+        "auth_header": lambda key: {"x-api-key": key, "anthropic-version": "2023-06-01"} if key else {},
+        "env_key": "ANTHROPIC_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "openai": {
+        "models_url": "https://api.openai.com/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "OPENAI_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "deepseek": {
+        "models_url": "https://api.deepseek.com/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "DEEPSEEK_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "google": {
+        "models_url": "https://generativelanguage.googleapis.com/v1beta/models",
+        "auth_header": lambda key: {"x-goog-api-key": key} if key else {},
+        "env_key": "GEMINI_API_KEY",
+        "models_path": "/models",
+    },
+    "xai": {
+        "models_url": "https://api.x.ai/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "XAI_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "mistral": {
+        "models_url": "https://api.mistral.ai/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "MISTRAL_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "cohere": {
+        "models_url": "https://api.cohere.com/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "COHERE_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "perplexity": {
+        "models_url": "https://api.perplexity.ai/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "PERPLEXITY_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "groq": {
+        "models_url": "https://api.groq.com/openai/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "GROQ_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "openrouter": {
+        "models_url": "https://openrouter.ai/api/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "OPENROUTER_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "together": {
+        "models_url": "https://api.together.xyz/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "TOGETHER_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "fireworks": {
+        "models_url": "https://api.fireworks.ai/inference/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "FIREWORKS_API_KEY",
+        "models_path": "/v1/models",
+    },
+    "github": {
+        "models_url": "https://models.inference.ai.azure.com/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "GITHUB_API_KEY",
+        "models_path": "/v1/models",
+    },
+    # Moonshot/Kimi — OpenAI-compatible, not yet in LiteLLM by default
+    "moonshot": {
+        "models_url": "https://api.moonshot.cn/v1/models",
+        "auth_header": lambda key: {"Authorization": f"Bearer {key}"} if key else {},
+        "env_key": "MOONSHOT_API_KEY",
+        "models_path": "/v1/models",
+    },
+}
+
+# Static fallbacks for providers whose /models endpoint is unreliable or gated
+_MODEL_FALLBACKS: dict = {
+    "ollama": ["llama3.1:8b", "llama3:8b", "mistral", "codellama", "deepseek-coder:7b"],
+    "openrouter": [],  # OpenRouter routes by model ID, no fixed list
+}
+
+# ── Model Registry — live discovery + caching ─────────────────────
+
+_MODEL_CACHE_TTL = 3600
+_model_cache = {}  # {provider: {"models": [str], "ts": float}}
+
+_MODEL_FAMILIES = {
+    "anthropic": ["claude-sonnet", "claude-opus", "claude-haiku", "claude-fable", "claude"],
+    "openai":     ["gpt-4o", "gpt-4", "o4", "o3", "o1", "gpt-3.5"],
+    "deepseek":   ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4", "deepseek-r1-0528"],
+    "google":     ["gemini-2.5", "gemini-2.0", "gemini-1.5"],
+    "xai":        ["grok-3", "grok-2"],
+    "mistral":    ["mistral-large", "codestral", "mistral-small", "open-mistral", "ministral"],
+    "cohere":     ["command-r", "command-a", "command"],
+    "perplexity": ["sonar"],
+    "groq":       ["llama", "mixtral", "gemma", "qwen", "deepseek"],
+    "together":   ["Meta-Llama", "DeepSeek", "Qwen"],
+    "fireworks":  ["llama", "deepseek", "mixtral", "qwen"],
+    "github":     ["gpt-4o", "gpt-4", "o3", "o4", "deepseek", "claude", "gemini", "mistral"],
+    "moonshot":   ["moonshot-v1"],
+}
+
+_VISION_PREFIXES = {
+    "anthropic": ["claude-sonnet", "claude-opus", "claude-fable"],
+    "openai":    ["gpt-4o", "gpt-4.1", "o1", "o3", "o4"],
+    "google":    ["gemini-2.5", "gemini-2.0"],
+}
+
+
+class ModelRegistry:
+    """Live model discovery, ranking, and caching.
+
+    Provider-agnostic — every provider gets a config entry in
+    :data:`PROVIDER_CONFIGS` and discovery just looks it up.
+
+    Usage::
+
+        models = ModelRegistry.discover("anthropic", api_key="...")
+        best = ModelRegistry.pick_best(models, "anthropic")
+    """
+
+    # ── configuration / key detection ─────────────────────────────
+
+    @staticmethod
+    def get_config(provider: str) -> dict | None:
+        """Return the PROVIDER_CONFIGS entry for *provider*, or None."""
+        return PROVIDER_CONFIGS.get(provider)
+
+    @staticmethod
+    def is_configured(provider: str, api_key: str = "") -> bool:
+        """Return True if *provider* has a usable API key available.
+
+        Checks the explicit *api_key* argument first, then the configured
+        environment variable.  Local providers (ollama) always return True.
+        """
+        if provider == "ollama":
+            return True
+        if api_key:
+            return True
+        cfg = PROVIDER_CONFIGS.get(provider)
+        if cfg and cfg.get("env_key"):
+            return bool(os.environ.get(cfg["env_key"]))
+        return False
+
+    # ── discovery + caching ───────────────────────────────────────
+
+    @staticmethod
+    def discover(
+        provider: str,
+        api_key: str = "",
+        api_url: str = "",
+    ) -> list[str]:
+        """Return available model *IDs* (no provider prefix) for *provider*.
+
+        Results are cached for ``_MODEL_CACHE_TTL`` seconds.
+        On failure returns stale cache or static fallback list.
+        """
+        now = time.time()
+        cached = _model_cache.get(provider)
+        if cached and now - cached["ts"] < _MODEL_CACHE_TTL:
+            return cached["models"]
+
+        try:
+            models = ModelRegistry._fetch(provider, api_key, api_url)
+            if models:
+                _model_cache[provider] = {"models": models, "ts": now}
+            return models
+        except Exception:
+            if cached:
+                return cached["models"]
+            return list(_MODEL_FALLBACKS.get(provider, []))
+
+    @staticmethod
+    def _fetch(provider: str, api_key: str, api_url: str) -> list[str]:
+        import urllib.request, urllib.error, json, ssl
+
+        # ── local Ollama ──────────────────────────────────────
+        if provider == "ollama":
+            ctx = ssl.create_default_context()
+            base = api_url.rstrip("/") if api_url else "http://localhost:11434"
+            req = urllib.request.Request(base + "/api/tags")
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+                data = json.loads(resp.read().decode())
+            return [m["name"] for m in data.get("models", []) if m.get("name")]
+
+        # ── remote providers ──────────────────────────────────
+        cfg = PROVIDER_CONFIGS.get(provider)
+        if not cfg:
+            return []
+
+        # Resolve URL: prefer api_url override, else use configured models_url
+        if api_url:
+            base = api_url.rstrip("/")
+            # Strip known path suffixes so the models path can be appended cleanly
+            for suffix in ["/v1/messages", "/v1/chat/completions", "/chat/completions", "/v1"]:
+                if base.endswith(suffix):
+                    base = base[: -len(suffix)]
+                    break
+            url = base + cfg.get("models_path", "/v1/models")
+        else:
+            url = cfg["models_url"]
+
+        # Guard: avoid double /v1/ when base already ends with it
+        if "/v1/v1/" in url:
+            url = url.replace("/v1/v1/", "/v1/")
+
+        # Build headers
+        headers = dict(cfg["auth_header"](api_key))  # type: ignore[arg-type]
+
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+            data = json.loads(resp.read().decode())
+
+        return [m["id"] for m in data.get("data", []) if m.get("id")]
+
+    # ── model selection ───────────────────────────────────────────
+
+    @staticmethod
+    def pick_best(
+        models: list[str],
+        provider: str,
+        family_hint: str = "",
+    ) -> str | None:
+        """Return the most capable available model ID for *provider*.
+
+        Picks the first matching family from ``_MODEL_FAMILIES[provider]``
+        and returns the alphabetically-last (newest) ID in that family.
+        """
+        if not models:
+            return None
+
+        families = _MODEL_FAMILIES.get(provider, [])
+        if family_hint:
+            families = [family_hint] + [f for f in families if f != family_hint]
+
+        for prefix in families:
+            candidates = [m for m in models if m.startswith(prefix)]
+            if candidates:
+                candidates.sort(reverse=True)
+                return candidates[0]
+
+        return models[0]
+
+    @staticmethod
+    def default_model(
+        provider: str,
+        api_key: str = "",
+        api_url: str = "",
+        fallback: str = "",
+    ) -> str:
+        """Return the LiteLLM-format default model string for *provider*.
+
+        Uses live discovery then ``pick_best``. Falls back to *fallback*
+        or the static ``PROVIDERS`` entry if discovery fails.
+        """
+        models = ModelRegistry.discover(provider, api_key, api_url)
+        if models:
+            best = ModelRegistry.pick_best(models, provider)
+            if best:
+                return f"{provider}/{best}"
+        if fallback:
+            return fallback
+        return PROVIDERS.get(provider, "")
+
+    @staticmethod
+    def is_vision_capable(model_id: str) -> bool:
+        """Return True if *model_id* likely supports image inputs."""
+        for prefix_list in _VISION_PREFIXES.values():
+            for p in prefix_list:
+                if model_id.startswith(p):
+                    return True
+        return False
+
+    @staticmethod
+    def validate_presets(provider: str, preset_keys: list[str]) -> list[str]:
+        """Return warning messages for preset model IDs that are unavailable."""
+        models = _model_cache.get(provider, {}).get("models", [])
+        if not models:
+            return []
+        warnings = []
+        for full_id in preset_keys:
+            raw = full_id.split("/", 1)[-1] if "/" in full_id else full_id
+            if raw not in models:
+                warnings.append(
+                    f"[AI] Preset model '{full_id}' is not in the live model list "
+                    f"for '{provider}'. Available: {', '.join(models[:6])}..."
+                )
+        return warnings
+
+
+def resolve_default_model(
+    provider: str,
+    api_key: str = "",
+    api_url: str = "",
+) -> str:
+    """Convenience wrapper — :func:`ModelRegistry.default_model`."""
+    return ModelRegistry.default_model(provider, api_key, api_url)
+
+
 # ── Adapters ───────────────────────────────────────────────────────
 
 
@@ -206,10 +530,22 @@ class DirectAdapter:
                    stream=False, on_token=None, max_tokens=None,
                    temperature=None, proxy_url=None) -> str | None:
         try:
+            FreeCAD.Console.PrintLog(
+                f"[AIC] DirectAdapter.completion ENTERED: model={model} "
+                f"msgs={len(messages) if messages else 0} key={'SET' if api_key else 'NONE'}\n"
+            )
+        except Exception:
+            pass
+        try:
             provider = model.split("/")[0] if "/" in model else ""
             ep = _resolve_endpoint(provider, api_url) or "(none)"
             FreeCAD.Console.PrintMessage(
                 f"[AI] Direct: {model} → {ep}\n"
+            )
+            FreeCAD.Console.PrintLog(
+                f"[AI] Direct {model}: "
+                f"api_key={'<SET>' if api_key else '<EMPTY>'} "
+                f"(prefix={api_key[:7] if api_key else 'N/A'}...)\n"
             )
             return _direct_completion(
                 model, messages, api_key=api_key, api_url=api_url,
@@ -230,7 +566,22 @@ class LiteLLMAdapter:
     def completion(self, model, messages, api_key=None, api_url=None,
                    stream=False, on_token=None, max_tokens=None,
                    temperature=None, proxy_url=None) -> str | None:
-        import litellm
+        try:
+            import FreeCAD as _fc
+            _fc.Console.PrintLog(
+                f"[AIC] LiteLLMAdapter.completion ENTERED: model={model} "
+                f"msgs={len(messages) if messages else 0} key={'SET' if api_key else 'NONE'}\n"
+            )
+        except Exception:
+            pass
+        try:
+            import litellm
+        except ImportError:
+            raise ImportError(
+                "LiteLLM package is required for this provider.\n"
+                "Run: & \"C:\\Program Files\\FreeCAD 1.1\\bin\\python.exe\" -m pip install litellm\n"
+                "Or reinstall the AI Companion addon via Addon Manager."
+            )
         litellm.ssl_verify = False
         proxy = proxy_url
         if not proxy:
@@ -242,8 +593,19 @@ class LiteLLMAdapter:
         if proxy:
             litellm.proxy = proxy
         kwargs = {"model": model, "messages": messages, "stream": stream}
+        # Anthropic requires explicit api_base and version header — LiteLLM's
+        # defaults can be overridden by env vars or lost in the handler chain.
+        if model.startswith("anthropic/"):
+            kwargs["api_base"] = "https://api.anthropic.com/v1/messages"
+            kwargs.setdefault("headers", {})["anthropic-version"] = "2023-06-01"
         if api_key:
             kwargs["api_key"] = api_key
+            FreeCAD.Console.PrintLog(
+                f"[AI] {model}: api_key={'<SET>' if api_key else '<EMPTY>'} "
+                f"(prefix={api_key[:7]}...)\n"
+            )
+        else:
+            FreeCAD.Console.PrintLog(f"[AI] {model}: api_key=<NOT PROVIDED>\n")
         if api_url:
             kwargs["api_base"] = api_url
         if max_tokens is not None:
@@ -312,23 +674,16 @@ PRESET_MODELS = [
     ("[OpenAI] GPT-4", "openai", "openai/gpt-4"),
     ("[OpenAI] GPT-3.5 Turbo", "openai", "openai/gpt-3.5-turbo"),
     # DeepSeek
-    ("[DeepSeek] Chat (latest V3/V4)", "deepseek", "deepseek/deepseek-chat"),
-    ("[DeepSeek] Reasoner (R1)", "deepseek", "deepseek/deepseek-reasoner"),
-    ("[DeepSeek] Coder", "deepseek", "deepseek/deepseek-coder"),
-    ("[DeepSeek] V3", "deepseek", "deepseek/deepseek-v3"),
-    ("[DeepSeek] V3.1", "deepseek", "deepseek/deepseek-v3.1"),
-    ("[DeepSeek] V4", "deepseek", "deepseek/deepseek-v4"),
     ("[DeepSeek] V4 Flash", "deepseek", "deepseek/deepseek-v4-flash"),
     ("[DeepSeek] V4 Pro", "deepseek", "deepseek/deepseek-v4-pro"),
-    ("[DeepSeek] R1-0528", "deepseek", "deepseek/deepseek-r1-0528"),
     # Anthropic
-    ("[Anthropic] Claude Sonnet 4", "anthropic", "anthropic/claude-sonnet-4-20250514"),
-    ("[Anthropic] Claude Opus 4", "anthropic", "anthropic/claude-opus-4-20250514"),
-    ("[Anthropic] Claude Haiku 3.5", "anthropic", "anthropic/claude-3-5-haiku-20241022"),
-    ("[Anthropic] Claude Sonnet 3.5", "anthropic", "anthropic/claude-3-5-sonnet-20241022"),
-    ("[Anthropic] Claude Opus 3", "anthropic", "anthropic/claude-3-opus-20240229"),
-    ("[Anthropic] Claude Sonnet 3", "anthropic", "anthropic/claude-3-sonnet-20240229"),
-    ("[Anthropic] Claude Haiku 3", "anthropic", "anthropic/claude-3-haiku-20240307"),
+    ("[Anthropic] Claude Sonnet 5", "anthropic", "anthropic/claude-sonnet-5"),
+    ("[Anthropic] Claude Opus 4.8", "anthropic", "anthropic/claude-opus-4-8"),
+    ("[Anthropic] Claude Sonnet 4.6", "anthropic", "anthropic/claude-sonnet-4-6"),
+    ("[Anthropic] Claude Opus 4.6", "anthropic", "anthropic/claude-opus-4-6"),
+    ("[Anthropic] Claude Haiku 4.5", "anthropic", "anthropic/claude-haiku-4-5-20251001"),
+    ("[Anthropic] Claude Sonnet 4.5", "anthropic", "anthropic/claude-sonnet-4-5-20250929"),
+    ("[Anthropic] Claude Opus 4.5", "anthropic", "anthropic/claude-opus-4-5-20251101"),
     # Google
     ("[Google] Gemini 2.5 Pro", "google", "gemini/gemini-2.5-pro-exp-03-25"),
     ("[Google] Gemini 2.5 Flash", "google", "gemini/gemini-2.5-flash-preview-04-17"),
@@ -412,6 +767,10 @@ PRESET_MODELS = [
     ("[GitHub] Gemini 2.5 Pro", "github", "github/gemini-2.5-pro"),
     ("[GitHub] Gemini 2.5 Flash", "github", "github/gemini-2.5-flash"),
     ("[GitHub] Mistral Large 3", "github", "github/mistral-large-2501"),
+    # Moonshot / Kimi
+    ("[Moonshot] v1-8k", "moonshot", "moonshot/moonshot-v1-8k"),
+    ("[Moonshot] v1-32k", "moonshot", "moonshot/moonshot-v1-32k"),
+    ("[Moonshot] v1-128k", "moonshot", "moonshot/moonshot-v1-128k"),
     # Ollama
     ("[Ollama] Llama 3.3 70B (local)", "ollama", "ollama/llama3.3-70b"),
     ("[Ollama] Llama 3.1 8B (local)", "ollama", "ollama/llama3.1:8b"),
@@ -446,8 +805,9 @@ VISION_CAPABLE = {
     "openai/gpt-4o", "openai/gpt-4o-2024-11-20", "openai/gpt-4o-mini",
     "openai/gpt-4.1", "openai/gpt-4.1-2025-04-14",
     "openai/o1", "openai/o1-2024-12-17", "openai/o3-mini", "openai/o3-mini-2025-01-31", "openai/o4-mini",
-    "anthropic/claude-sonnet-4-20250514", "anthropic/claude-opus-4-20250514",
-    "anthropic/claude-3-5-haiku-20241022",
+    "anthropic/claude-sonnet-5", "anthropic/claude-opus-4-8",
+    "anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-4-5-20250929",
+    "anthropic/claude-haiku-4-5-20251001",
     "gemini/gemini-2.5-pro-exp-03-25", "gemini/gemini-2.5-flash-preview-04-17",
 }
 
@@ -467,66 +827,27 @@ def is_local_provider(provider: str, api_url: str = "") -> bool:
 def fetch_available_models(provider: str, api_url: str = "", api_key: str = "") -> list[str]:
     """Fetch available models from the provider in LiteLLM format.
     Returns list of LiteLLM model strings (e.g. ['ollama/llama3.1:8b', ...]).
-    Falls back to empty list on any error (UI will show presets + editable field)."""
-    import urllib.request, urllib.error, json, ssl
+    Falls back to empty list on any error (UI will show presets + editable field).
 
+    Delegates to :class:`ModelRegistry` under the hood.
+    """
     if provider == "ollama":
         base = api_url.rstrip("/") if api_url else "http://localhost:11434"
         url = base + "/api/tags"
+        import urllib.request, ssl, json
         try:
             ctx = ssl.create_default_context()
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
                 data = json.loads(resp.read().decode())
-            models = []
-            for m in data.get("models", []):
-                name = m.get("name", "")
-                if name:
-                    models.append(f"ollama/{name}")
-            return sorted(models)
+            return sorted(
+                f"ollama/{m['name']}" for m in data.get("models", []) if m.get("name")
+            )
         except Exception:
             return []
 
-    if provider in LITELLM_PROVIDERS and provider != "ollama":
-        base = api_url.rstrip("/") if api_url else None
-        if not base:
-            defaults = {
-                "openai": "https://api.openai.com/v1",
-                "deepseek": "https://api.deepseek.com",
-                "anthropic": "https://api.anthropic.com/v1",
-                "groq": "https://api.groq.com/openai/v1",
-                "mistral": "https://api.mistral.ai/v1",
-                "xai": "https://api.x.ai/v1",
-                "openrouter": "https://openrouter.ai/api/v1",
-                "together": "https://api.together.xyz",
-                "fireworks": "https://api.fireworks.ai/inference/v1",
-                "github": "https://models.inference.ai.azure.com",
-                "cohere": "https://api.cohere.com",
-                "perplexity": "https://api.perplexity.ai",
-                "google": "https://generativelanguage.googleapis.com/v1beta",
-            }
-            base = defaults.get(provider, "")
-
-        if not base:
-            return []
-
-        url = base.rstrip("/") + "/v1/models"
-        try:
-            headers = {}
-            if api_key and provider != "google":
-                headers["Authorization"] = f"Bearer {api_key}"
-            ctx = ssl.create_default_context()
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
-                data = json.loads(resp.read().decode())
-            prefix = provider
-            models = []
-            for m in data.get("data", []):
-                mid = m.get("id", "")
-                if mid:
-                    models.append(f"{prefix}/{mid}")
-            return sorted(models)
-        except Exception:
-            return []
-
-    return []
+    try:
+        models = ModelRegistry.discover(provider, api_key=api_key, api_url=api_url)
+        return sorted(f"{provider}/{m}" for m in models)
+    except Exception:
+        return []

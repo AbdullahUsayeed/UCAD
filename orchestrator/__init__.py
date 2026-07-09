@@ -14,11 +14,12 @@ from .errors import (ERROR_TRANSLATIONS, ERROR_STRATEGIES, ErrorReport,
                      _extract_error_location, build_error_report, build_retry_prompt,
                      _highlight_bad_lines, _fallback_strategy_for_category)
 
-from .providers import (PROVIDERS, PROVIDER_TUNING, PROVIDER_HELP_URLS,
+from .providers import (PROVIDERS, PROVIDER_CONFIGS, PROVIDER_TUNING, PROVIDER_HELP_URLS,
                         _provider_max_retries, _provider_style_hint,
                         LiteLLMAdapter, PROVIDER_ADAPTERS, LITELLM_PROVIDERS, PRESET_MODELS,
                         MAX_RETRIES, VISION_CAPABLE, MODES,
-                        fetch_available_models)
+                        fetch_available_models,
+                        ModelRegistry, resolve_default_model)
 
 from .templates import TEMPLATES, TEMPLATE_SCHEMAS, render_template
 
@@ -58,7 +59,7 @@ __all__ = [
     "_provider_max_retries", "_provider_style_hint",
     "LiteLLMAdapter", "PROVIDER_ADAPTERS",
     "LITELLM_PROVIDERS", "PRESET_MODELS", "MAX_RETRIES", "VISION_CAPABLE", "MODES",
-    "fetch_available_models",
+    "fetch_available_models", "ModelRegistry", "resolve_default_model",
     # templates
     "TEMPLATES", "TEMPLATE_SCHEMAS", "render_template",
     # security

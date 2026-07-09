@@ -9,7 +9,8 @@ from task_step import TaskStep
 
 # Import from sibling submodules
 from .errors import build_error_report, build_retry_prompt
-from .providers import (PROVIDERS, _provider_style_hint, PROVIDER_ADAPTERS,
+from .providers import (PROVIDERS, resolve_default_model,
+                        _provider_style_hint, PROVIDER_ADAPTERS,
                         LITELLM_PROVIDERS, VISION_CAPABLE, is_local_provider,
                         _provider_max_tokens, _provider_temperature)
 from .local_pipeline import (build_messages_local, generate_code_local)
@@ -85,7 +86,9 @@ class AIOrchestrator(QtCore.QObject):
         except Exception: return os.path.expanduser("~")
     
     def get_provider_config(self):
-        default_model = PROVIDERS.get(self.provider, PROVIDERS["deepseek"])
+        default_model = resolve_default_model(
+            self.provider, self.api_key or "", self.custom_url or ""
+        ) or PROVIDERS.get(self.provider, PROVIDERS["deepseek"])
         return (self.custom_url or None, self.custom_model or default_model, None)
     
     def set_board_context(self, filepath):
@@ -326,6 +329,22 @@ Available workbenches: {workbenches}
 3. Before each step, verify its prerequisites exist. If missing, add a step to create them first.
 4. Keep steps small, single-focused, and testable — each should produce a visible result.
 5. {plan_instruction}""" 
+        if mode == "ask":
+            return f"""### USER QUESTION: {user_input}
+
+Answer the user's question about FreeCAD. Provide clear explanations,
+reference relevant workbenches/tools, and include short ```python examples
+when they help illustrate. Do NOT generate complete macros unless asked.
+
+CURRENT SCENE STATE (for reference):
+{scene_summary}
+{relevant}
+{docs_list}
+{context}
+{selection}
+Available workbenches: {workbenches}
+{history}"""
+
         return f"""### CURRENT SCENE STATE
 {scene_summary}
 {relevant}
@@ -406,11 +425,21 @@ RESPONSE FORMAT RULES — follow these before doing anything else:
 
 """
 
+    ASK_MODE_HEADER = """You are a helpful FreeCAD expert assistant. Answer the user's question clearly and concisely.
+- Prioritize practical solutions and step-by-step guidance.
+- Include short ```python code examples when they help illustrate the answer.
+- Do NOT generate complete macros or full solutions unless explicitly asked.
+- If troubleshooting, ask about specific error messages or unexpected behavior.
+- Reference relevant workbenches, tools, and API calls by name."""
+
     def build_system_prompt(self, mode="build"):
         """Assemble the full system prompt: knowledge base + context data."""
         user_msg = getattr(self, '_last_user_input', "")
         kb = self.kb.build(user_msg, mode)
-        parts = [self.RESPONSE_MODE_HEADER, kb]
+        if mode == "ask":
+            parts = [self.ASK_MODE_HEADER, kb]
+        else:
+            parts = [self.RESPONSE_MODE_HEADER, kb]
         # Inject API corrections as dynamic COMMON MISTAKES
         corr = self._build_api_corrections_section()
         if corr:
@@ -473,9 +502,9 @@ RESPONSE FORMAT RULES — follow these before doing anything else:
         
         If the input doesn't look like a CAD request, returns ``None``
         so the caller can show a "not a CAD request" message instead of
-        wasting an LLM call."""
+        wasting an LLM call. Ask mode bypasses this check."""
         self._last_user_input = user_input
-        if not self._is_cad_request(user_input):
+        if mode != "ask" and not self._is_cad_request(user_input):
             return None
         obs = self.capture_observation()[:600]
 
@@ -987,9 +1016,17 @@ RESPONSE FORMAT RULES — follow these before doing anything else:
             print(f"[AI] Unknown provider: {self.provider}")
             return None
 
-        default_model = PROVIDERS.get(self.provider, PROVIDERS["deepseek"])
+        default_model = resolve_default_model(
+            self.provider, self.api_key or "", self.custom_url or ""
+        ) or PROVIDERS.get(self.provider, PROVIDERS["deepseek"])
         model = self.custom_model or default_model
         url = self.custom_url if self.custom_url else None
+
+        FreeCAD.Console.PrintLog(
+            f"[AIC] call_ai: provider={self.provider} model={model} "
+            f"key={'SET' if self.api_key else 'NONE'} url={url or 'default'} "
+            f"msgs_count={len(messages) if messages else 0}\n"
+        )
 
         try:
             result = adapter.completion(
@@ -1392,6 +1429,7 @@ RESPONSE FORMAT RULES — follow these before doing anything else:
         """Generate code with validation. For remote models, uses two-pass API plan validation.
         For local models, uses one-shot generation with no retry."""
         if not api_msgs:
+            FreeCAD.Console.PrintLog("[AIC] generate_code_safe: EARLY RETURN — api_msgs is empty\n")
             return "", None, False
         if self.is_local:
             return self._generate_code_local(api_msgs, stream_callback=stream_callback)
@@ -1402,6 +1440,7 @@ RESPONSE FORMAT RULES — follow these before doing anything else:
         while True:
             response, code, used_api = self.generate_code(api_msgs, stream_callback=stream_callback)
             if not response:
+                FreeCAD.Console.PrintLog("[AIC] generate_code_safe: no response from API, returning early\n")
                 return "", None, False
 
             violations = []
@@ -2016,7 +2055,7 @@ Why this matters:
             "build": "You are an autonomous FreeCAD design agent. Keep analysis brief (1-2 sentences max), then output a numbered plan listing each step.\n\nFor each step, output in TWO PASSES within a single response:\nPASS 1 — <API_PLAN> block: every FreeCAD property/attribute assignment you intend to use.\nPASS 2 — ```python code block: the complete implementation.\nThe API plan will be validated against known-wrong patterns before the code executes.\n\nCode that is cut off or truncated will NOT execute — always close your ``` fence.\n\nTARGET RESOLUTION (try in order):\n1. Selected object if compatible.\n2. Object matching the planner description (type, attachment, dimensions).\n3. Only one object of the required type — use it.\n4. No unique target — explain what is missing. Do NOT guess.\n\nFormat:\n1. First step description\n2. Second step description\n...\n\n<API_PLAN>\n... attribute assignments ...\n</API_PLAN>\n\n```python\n# Code for step 1 only\n```",
             "plan": plan_role,
             "simple": "You are a FreeCAD code generator. The request is a SINGLE simple object — do NOT output a numbered plan and do NOT split into steps.\n\nOutput in TWO PASSES within a single response:\nPASS 1 — <API_PLAN> block: every FreeCAD property/attribute assignment and method call you intend to use. One per line.\nPASS 2 — ```python code block: the complete implementation creating ONE object with sensible default dimensions if none are given.\nThe API plan will be validated against known-wrong patterns before the code executes.\n\nCode that is cut off or truncated will NOT execute — always close your ``` fence.\nEnd with doc.recompute() and FreeCADGui.SendMsgToActiveView('ViewFit').",
-            "ask": "You are a FreeCAD assistant. Guide the user step by step with clear explanations. Reference relevant FreeCAD workbenches, tools, and API calls. Include short code examples in ```python blocks when they help illustrate the answer. If the user is troubleshooting, help them diagnose by asking about specific error messages or unexpected behavior. Prioritize practical solutions over theory.",
+            "ask": "You are a helpful FreeCAD expert assistant.",
             "dxf": "You are a FreeCAD DXF agent. Read the DXF profile data below and output COMPLETE code in ```python blocks to build the requested 3D geometry from the DXF profiles.",
             "pcb": "You are a PCB enclosure design agent. Read the BOARD DATA section below. Output a single ```json block with parameter overrides for build_from_parsed(). DO NOT output Python code — the template runs automatically. Available params: wall_thickness, margin, pcb_standoff_height, headroom, screw_size, enable_vents, enable_pcb_ref, enable_snaps, enable_label_recess. Example: ```json\n{\"wall_thickness\": 3.0, \"margin\": 6.0, \"enable_pcb_ref\": true}\n```",
         }
@@ -2504,6 +2543,63 @@ Why this matters:
         'SnellsLaw': 6, 'PointOnObject': 3,
     }
 
+    def _reorder_sketch_ops(self, code):
+        """Move addConstraint calls AFTER addGeometry calls per sketch variable.
+        Only constraint calls that appear before the last geometry call are moved —
+        geometry calls and intervening variable assignments stay in place."""
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return code
+
+        body = list(tree.body)
+
+        def _call_attr(stmt):
+            if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)):
+                return None
+            call = stmt.value
+            if not (isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)):
+                return None
+            return call.func.value.id, call.func.attr
+
+        sketch_vars = set()
+        for stmt in body:
+            pair = _call_attr(stmt)
+            if pair and pair[1] in ('addGeometry', 'addConstraint'):
+                sketch_vars.add(pair[0])
+
+        changed = False
+        for var_name in sketch_vars:
+            geo_idx = []
+            con_idx = []
+            for idx, stmt in enumerate(body):
+                pair = _call_attr(stmt)
+                if pair and pair[0] == var_name:
+                    if pair[1] == 'addGeometry':
+                        geo_idx.append(idx)
+                    elif pair[1] == 'addConstraint':
+                        con_idx.append(idx)
+            if not geo_idx or not con_idx:
+                continue
+            if max(geo_idx) < min(con_idx):
+                continue
+            last_geo = max(geo_idx)
+            con_before_last_geo = [(idx, body[idx]) for idx in con_idx if idx < last_geo]
+            if not con_before_last_geo:
+                continue
+            for idx in sorted([i for i, _ in con_before_last_geo], reverse=True):
+                del body[idx]
+            adj = last_geo - sum(1 for i, _ in con_before_last_geo if i < last_geo)
+            for _, stmt in con_before_last_geo:
+                adj += 1
+                body.insert(adj, stmt)
+            changed = True
+
+        if not changed:
+            return code
+        tree.body = body
+        return ast.unparse(tree)
+
     def validate_sketch_constraints(self, code):
         """Pre-execution AST validation of sketch constraint code.
         Uses sequential AST body traversal to catch geo-index ordering errors.
@@ -2515,6 +2611,7 @@ Why this matters:
 
         errors = []
         list_contents = {}     # var_name -> list of item tags
+        geo_vars = set()       # var_names that hold geometry objects
         running_geo = {}       # sketch_var_name -> current geometry count
         geo_types = ('Part.LineSegment', 'Part.ArcOfCircle', 'Part.Circle',
                      'Part.BSplineCurve', 'Part.ArcOfEllipse', 'Part.ArcOfHyperbola',
@@ -2537,8 +2634,16 @@ Why this matters:
             """Count geometry items in an addGeometry argument."""
             if isinstance(arg_node, ast.Name) and arg_node.id in list_contents:
                 return sum(1 for item in list_contents[arg_node.id] if item == 'GEO')
+            if isinstance(arg_node, ast.Name) and arg_node.id in geo_vars:
+                return 1
             if isinstance(arg_node, ast.List):
-                return sum(1 for elt in arg_node.elts if _is_geo_call(elt))
+                count = 0
+                for elt in arg_node.elts:
+                    if _is_geo_call(elt):
+                        count += 1
+                    elif isinstance(elt, ast.Name) and elt.id in geo_vars:
+                        count += 1
+                return count
             if isinstance(arg_node, ast.Call) and _is_geo_call(arg_node):
                 return 1
             return 0
@@ -2580,11 +2685,26 @@ Why this matters:
 
         # Sequential traversal — execution order matters
         for stmt in tree.body:
-            # name = []
+            # name = [geo1, geo2, ...]  — analyze list elements for GEO markers
             if isinstance(stmt, ast.Assign):
                 for target in stmt.targets:
                     if isinstance(target, ast.Name) and isinstance(stmt.value, ast.List):
-                        list_contents[target.id] = []
+                        items = []
+                        for elt in stmt.value.elts:
+                            if _is_geo_call(elt):
+                                items.append('GEO')
+                            elif (isinstance(elt, ast.Call) and
+                                  isinstance(elt.func, ast.Attribute) and
+                                  elt.func.attr == 'Constraint'):
+                                items.append(('CONSTRAINT', elt))
+                            elif isinstance(elt, ast.Name) and elt.id in geo_vars:
+                                items.append('GEO')
+                            else:
+                                items.append(elt)
+                        list_contents[target.id] = items
+                    # name = Part.Circle(...) or name = Part.LineSegment(...)
+                    elif isinstance(target, ast.Name) and _is_geo_call(stmt.value):
+                        geo_vars.add(target.id)
 
             # for x in range(N): ...  (Option B — unroll small constant loops)
             if isinstance(stmt, ast.For) and isinstance(stmt.iter, ast.Call):
@@ -2988,9 +3108,18 @@ Why this matters:
             geo_safe, geo_msg = self.validate_geometry_risk(code)
             if not geo_safe:
                 return False, geo_msg
+            # Auto-reorder: move addGeometry before addConstraint per sketch var
+            code_original = code
+            code = self._reorder_sketch_ops(code)
             # Pre-execution sketch constraint validation
             sketch_err = self.validate_and_report_sketch(code)
             if sketch_err:
+                self._last_generated_code = code_original
+                self._last_error_report = build_error_report(
+                    ValueError(sketch_err),
+                    sketch_err,
+                    retry_tier=getattr(self, '_retry_count', 0) + 1,
+                )
                 return False, sketch_err
             # Pre-execution dimension sanity check
             dim_safe, dim_warn = self.validate_dimension_sanity(code, user_input)

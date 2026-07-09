@@ -75,15 +75,23 @@
 import FreeCAD, FreeCADGui
 from compat import QtWidgets, QtCore, QtGui, Qt
 import os, json, datetime, re, html as _html
-from orchestrator import AIOrchestrator, TEMPLATES, render_template, MAX_RETRIES, PRESET_MODELS, PROVIDERS, _provider_max_retries, classify_failure, summarize_failures
+from orchestrator import AIOrchestrator, TEMPLATES, render_template, MAX_RETRIES, PRESET_MODELS, PROVIDERS, LITELLM_PROVIDERS, _provider_max_retries, classify_failure, summarize_failures, ModelRegistry
 from companion_app import CodeWorker, ClassifyWorker
 from sidebar_widget import SidebarWidget
 from chat_panel import ChatPanel
-from code_history_widget import CodeHistoryWidget
+
 from pcb_mode import PcbInputWidget
 from dxf_mode import DxfInputWidget
 from secret_store import atomic_write_json, has_legacy_plaintext, load_json_file, read_secret, store_secret
 from task_step import TaskStep, StepState
+
+# Launcher integration — when launched via UCAD Launcher, read config centrally
+_UCAD_HOME = os.environ.get("UCAD_HOME", "")
+if _UCAD_HOME:
+    try:
+        from launcher.config_adapter import merge_configs, get_api_key, load_launcher_config
+    except ImportError:
+        _UCAD_HOME = ""  # fall back to legacy behavior
 
 PROVIDERS_WITHOUT_KEYS = {"ollama", "templates"}
 
@@ -506,19 +514,7 @@ class AISidebar(QtWidgets.QWidget):
         self._thinking_header = self.chat_panel._thinking_header
         self._thinking = self.chat_panel._thinking
 
-        # ── Code History Tab ──────────────────────────────────
-        self._code_history = CodeHistoryWidget()
-        self._code_history.set_save_callback(self._save_entry_code)
-        self.sidebar_widget.set_code_history(self._code_history)
-
-        # ── Copilot (Macro Editor) ──────────────────────────────
-        from copilot_widget import CopilotEditor
-        self._copilot_editor = CopilotEditor()
-        self.sidebar_widget.set_copilot_editor(self._copilot_editor)
-        self._last_code_block = ""
-
-        # Wire Apply button: insert last AI code block into the editor
-        self.sidebar_widget.apply_button.clicked.connect(self._apply_last_code)
+        
 
         # Spin animation compatibility
         self.spin = Spinner(self)
@@ -738,6 +734,18 @@ class AISidebar(QtWidgets.QWidget):
         provider = self._current_provider()
         self._populate_model_combo(provider)
         self.c_model = self._current_model_entry().get("model", "")
+        # Check for provider-key mismatch
+        key = getattr(self, 'api_key', '') or ''
+        if provider == "anthropic" and key and not key.startswith("sk-ant-"):
+            self.msg(
+                "Warning",
+                f"⚠️ The stored API key doesn't look like an Anthropic key "
+                f"(should start with 'sk-ant-').\n"
+                f"Open **Settings → API Keys** to enter the correct key."
+            )
+        elif provider == "deepseek":
+            # DeepSeek keys vary (sk-, ds-, etc.) — no strict prefix check
+            pass
         self._rebuild()
         self.msg("System", f"Provider: **{self._pretty_provider(provider)}**")
         is_local = provider == "ollama"
@@ -795,11 +803,31 @@ class AISidebar(QtWidgets.QWidget):
         self._model_combo.blockSignals(False)
 
     def load(self):
-        p=os.path.join(os.path.dirname(__file__),"config.json")
+        p = os.path.join(os.path.dirname(__file__), "config.json")
         cfg = load_json_file(p)
-        self.api_key = read_secret(cfg, "api_key")
+
+        # If launched by UCAD Launcher, merge centralized config on top
+        if _UCAD_HOME:
+            cfg = merge_configs(cfg)
+            FreeCAD.Console.PrintLog("[AI] Using centralized launcher config\n")
+
+        key_raw = read_secret(cfg, "api_key") or cfg.get("api_key")
+        # If no key found in config and we have launcher, try direct
+        if not key_raw and _UCAD_HOME:
+            try:
+                key_raw = get_api_key()
+            except Exception:
+                pass
+
+        self.api_key = key_raw
         self.c_model = cfg.get("model", "")
         self.c_url = cfg.get("url", "")
+        provider = cfg.get("provider", "")
+        FreeCAD.Console.PrintLog(
+            f"[AI] load: provider={provider} model={self.c_model} "
+            f"api_key={'<SET>' if key_raw else '<EMPTY>'} "
+            f"(prefix={key_raw[:7] if key_raw else 'N/A'}...)\n"
+        )
 
 
         selected_provider = cfg.get("provider", "")
@@ -848,6 +876,52 @@ class AISidebar(QtWidgets.QWidget):
         self._apply_theme(self._theme)
 
     def _write_config(self, key, prov, model="", url=""):
+        if _UCAD_HOME:
+            # Write to launcher's centralized config instead
+            try:
+                import json as _json
+                lc_path = os.path.join(_UCAD_HOME, "Config", "config.json")
+                cfg = {
+                    "provider": prov,
+                    "model": model,
+                    "url": url,
+                    "provider_label": self._provider_combo.currentText(),
+                    "model_label": self._current_model_entry().get("label", self._model_combo.currentText()),
+                    "mode": self.sidebar_widget.current_mode,
+                    "retries_per_step": self._retries_per_step,
+                    "auto_replan": self._auto_replan,
+                    "sandbox_mode": self._sandbox_mode,
+                    "max_defer_attempts": self._max_defer_attempts,
+                    "ollama_url": self._ollama_url,
+                    "ollama_model": self._ollama_model,
+                    "theme": self._theme,
+                    "chat_font_size": self._chat_font_size,
+                    "code_font_size": self._code_font_size,
+                    "temperature": self._temperature,
+                    "max_history_length": self._max_history_length,
+                    "max_tokens": self.max_tokens or 0,
+                    "proxy_url": getattr(self, '_proxy_url', ''),
+                }
+                os.makedirs(os.path.dirname(lc_path), exist_ok=True)
+                tmp = lc_path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    _json.dump(cfg, f, indent=2)
+                os.replace(tmp, lc_path)
+                # Write secret separately
+                secret_path = os.path.join(_UCAD_HOME, "Secrets", "secret.bin")
+                os.makedirs(os.path.dirname(secret_path), exist_ok=True)
+                # Use launcher's encryption if possible
+                try:
+                    from launcher.config_manager import set_secret
+                    set_secret("api_key", key)
+                except Exception:
+                    pass
+                FreeCAD.Console.PrintLog("[AI] Config saved to launcher config\n")
+                return
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"[AI] Failed to write launcher config: {e}\n")
+
+        # Legacy: write to Mod-relative config.json
         cfg = {
             "provider": prov,
             "model": model,
@@ -875,6 +949,12 @@ class AISidebar(QtWidgets.QWidget):
         atomic_write_json(os.path.join(os.path.dirname(__file__),"config.json"), cfg)
     
     def save(self, key, prov, model="", url=""):
+        old_prefix = (self.api_key[:7] + "...") if self.api_key else "<EMPTY>"
+        new_prefix = (key[:7] + "...") if key else "<EMPTY>"
+        FreeCAD.Console.PrintLog(
+            f"[AI] save: provider={prov} model={model} "
+            f"old_key_prefix={old_prefix} new_key_prefix={new_prefix}\n"
+        )
         self.api_key = key
         self.c_model = model
         self.c_url = url
@@ -902,13 +982,38 @@ class AISidebar(QtWidgets.QWidget):
             api_url = self._ollama_url.rstrip("/")
         else:
             api_url = self.c_url if self.c_url else None
+        key = self.api_key if prov != "templates" else ""
+        FreeCAD.Console.PrintLog(
+            f"[AI] _rebuild: provider={prov} model={mdl} "
+            f"api_key={'<SET>' if key else '<EMPTY>'} "
+            f"(prefix={key[:7] if key else 'N/A'}...)\n"
+        )
         self.orch=AIOrchestrator(
-            self.api_key if prov != "templates" else "",
+            key,
             provider=prov,
             model=mdl,
             api_url=api_url,
             proxy_url=getattr(self, '_proxy_url', '') or None,
         )
+
+        # Validate presets against live model list.
+        warnings = []
+        if key and prov in LITELLM_PROVIDERS and prov != "ollama":
+            models = ModelRegistry.discover(prov, api_key=key, api_url=api_url or "")
+            if models:
+                preset_keys = [e[2] for e in PRESET_MODELS if e[1] == prov and e[2]]
+                for full_id in preset_keys:
+                    raw = full_id.split("/", 1)[-1] if "/" in full_id else full_id
+                    if raw not in models:
+                        warnings.append(
+                            f"[AI] Preset model '{full_id}' is not available "
+                            f"for '{prov}'. "
+                            f"Available: {', '.join(models[:5])}...\n"
+                        )
+        for w in warnings:
+            FreeCAD.Console.PrintWarning(w)
+            FreeCAD.Console.PrintLog(w)
+
         if hasattr(self, '_pcb_widget') and self._pcb_widget:
             self._pcb_widget.set_orch(self.orch)
             if self._pcb_widget._board_data:
@@ -917,8 +1022,6 @@ class AISidebar(QtWidgets.QWidget):
             self._dxf_widget.set_orch(self.orch)
             if self._dxf_widget._dxf_data:
                 self.orch._dxf_context = self._dxf_widget._dxf_data
-        if hasattr(self, '_copilot_editor') and self._copilot_editor:
-            self._copilot_editor.set_orchestrator(self.orch)
         # Apply general settings to orchestrator
         if self.orch:
             self.orch.use_sandbox = self._sandbox_mode
@@ -947,6 +1050,25 @@ class AISidebar(QtWidgets.QWidget):
         from settings_dialog import SETTINGS_KEYS
         for k in SETTINGS_KEYS:
             cfg[k] = settings.get(k)
+
+        if _UCAD_HOME:
+            # Write to launcher's centralized config
+            try:
+                import json as _json
+                lc_path = os.path.join(_UCAD_HOME, "Config", "config.json")
+                os.makedirs(os.path.dirname(lc_path), exist_ok=True)
+                existing = {}
+                if os.path.exists(lc_path):
+                    with open(lc_path, "r", encoding="utf-8") as f:
+                        existing = _json.load(f)
+                existing.update(cfg)
+                tmp = lc_path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    _json.dump(existing, f, indent=2)
+                os.replace(tmp, lc_path)
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"[AI] Failed to write launcher config: {e}\n")
+
         from secret_store import atomic_write_json
         atomic_write_json(os.path.join(os.path.dirname(__file__), "config.json"), cfg)
 
@@ -1026,11 +1148,6 @@ class AISidebar(QtWidgets.QWidget):
         if s not in ("You", "System", "Error"):
             raw = str(t or "")
             blocks = re.findall(r"```(?:\w+)?\n(.*?)```", raw, re.DOTALL)
-            if blocks:
-                self._last_code_block = "\n\n".join(b.strip() for b in blocks)
-                self.sidebar_widget.show_apply_bar(f"Last AI code — {len(self._last_code_block)} chars")
-            else:
-                self.sidebar_widget.hide_apply_bar()
         text_html = htmlmod.escape(str(t or ""))
         # Fenced code blocks → styled <pre><code> (before <br> to preserve newlines)
         text_html = re.sub(
@@ -1177,7 +1294,6 @@ class AISidebar(QtWidgets.QWidget):
         if d.exec() and d.selected:
             name=d.selected
             code=render_template(name).replace("```python\n","").replace("\n```","")
-            self._code_history.append("Preview", code)
             self._do_send(f"use template {name}")
     
     def _newdoc(self):
@@ -1258,18 +1374,7 @@ class AISidebar(QtWidgets.QWidget):
         self._pending_msgs = None
         self._step_retry_state = None
         self._retries = 0
-        self._code_history.clear()
-        self.sidebar_widget.update_code_badge(0)
         self._set_dot("#8a9099")
-        self.sidebar_widget.hide_apply_bar()
-
-    def _apply_last_code(self):
-        """Insert the last AI-generated code block into the copilot editor."""
-        if not self._last_code_block:
-            return
-        if hasattr(self, '_copilot_editor') and self._copilot_editor:
-            self._copilot_editor.insert_at_cursor(self._last_code_block)
-            self.sidebar_widget.flash_code_tab()
         self._status_text.setText("READY"); self._status_text.setStyleSheet("color:#8a9099;font-size:10px;font-weight:500;letter-spacing:0.5px;")
         self.spin.setVisible(False)
         # Reset DXF state
@@ -1326,7 +1431,7 @@ class AISidebar(QtWidgets.QWidget):
     # ── Send ──────────────────────────────────────────────────
     def _launch_worker(self, api_msgs, user_input):
         """Start CodeWorker in a background QThread for the API call only."""
-        if self._closed:
+        if self._closed or self._abandoned:
             return False
         self._require_orch()
         self._cleanup_dead_worker_refs()
@@ -1511,7 +1616,7 @@ class AISidebar(QtWidgets.QWidget):
         self._mode = self.sidebar_widget.current_mode
         if self.orch.is_local:
             # Local model: skip planning/complexity, go straight to code gen
-            self._pending_msgs = self.orch.build_messages(text, mode="build")
+            self._pending_msgs = self.orch.build_messages(text, mode=self._mode)
             if not self._pending_msgs:
                 self.msg("AI", "I can only help with FreeCAD modeling tasks like creating shapes, applying operations, or modifying objects.")
                 self._finish()
@@ -1748,7 +1853,7 @@ class AISidebar(QtWidgets.QWidget):
             return
         if self._deferred is not None:
             return
-        self._deferred = (action, args)
+        self._deferred = (action, args, self._worker_gen)
         self._defer_attempts = 0
         self.spin.setVisible(False)
         delay_ms = 2000 if action == "next_step" else 25
@@ -1762,7 +1867,9 @@ class AISidebar(QtWidgets.QWidget):
         self._deferred = None
         if action_args is None:
             return
-        action, args = action_args
+        action, args, gen = action_args
+        if gen != self._worker_gen:
+            return
         self._defer_attempts += 1
         if self._defer_attempts > self.MAX_DEFER_ATTEMPTS:
             self.msg("Error", "Deferred action exhausted — giving up.", chat=True)
@@ -1787,8 +1894,9 @@ class AISidebar(QtWidgets.QWidget):
             self._finish()
             return
         if not launched:
-            self._deferred = (action, args)
-            QtCore.QTimer.singleShot(25, self._flush_deferred)
+            if self._deferred is None:
+                self._deferred = (action, args, gen)
+                QtCore.QTimer.singleShot(25, self._flush_deferred)
 
     def _on_code_ready(self, raw_text, code, used_api, gen=0):
         self._require_orch()
@@ -1921,18 +2029,22 @@ class AISidebar(QtWidgets.QWidget):
                         self.msg("Observation", obs)
                 else:
                     self.msg("Error", f"The local model produced code but execution failed: {message[:300]}", chat=True)
-                # Show code in CODE tab + apply bar
-                self._last_code_block = code
-                self._code_history.append("Generated Code", code)
-                self.sidebar_widget.update_code_badge(self._code_history.count)
-                self.sidebar_widget.flash_code_tab()
-                self.sidebar_widget.show_apply_bar(code)
                 # Record result so next request has scene context
                 self.orch.record_result(self._pending_input, code, success, message, 0)
                 self._finish()
                 return
 
             if not code:
+                if not used_api and not raw_text:
+                    self.msg("Error",
+                        "⚠️ The AI provider did not return a response. "
+                        "Check your API key and model configuration in **Settings → API Keys**.",
+                        chat=True)
+                    self.orch.record_result(
+                        self._pending_input, "", False,
+                        "API returned no response", self._retries)
+                    self._finish()
+                    return
                 self.msg("AI", raw_text)
                 self.orch.record_result(self._pending_input, code or "", True, "Responded with text", self._retries)
                 self._finish()
@@ -2066,7 +2178,7 @@ class AISidebar(QtWidgets.QWidget):
                     self.msg("System",
                         f"🚀 Step failed {len(cur.failure_modes)} times — retrying with full context.",
                         chat=True)
-            if not success and self._retries < max_r:
+            if not success and self._retries < max_r and used_api:
                 self._retries += 1
                 self.orch._retry_count = self._retries
                 self._status_text.setText(f"🔄 Retry {self._retries}/{max_r}")
@@ -2175,7 +2287,12 @@ class AISidebar(QtWidgets.QWidget):
             obs_short = (obs or "")[:180]
             if obs and len(obs) > 180:
                 obs_short += "…"
-            self.msg("Result", f"{step_label} {message}\n{obs_short}".strip())
+            # Show completion with step title for clear visibility
+            step_title = ""
+            if self._plan_steps and self._plan_step_idx > 0:
+                step_title = self._plan_steps[self._plan_step_idx - 1].title
+            completion_prefix = f"✅ {step_label} complete" + (f" — {step_title}" if step_title else "")
+            self.msg("Result", f"{completion_prefix}\n{message or 'OK'}\n{obs_short}".strip())
             # Full scene dump in the thinking panel for reference
             if obs and len(obs) > 200:
                 self._thinking_header.setText("📐 Scene details")
@@ -2189,9 +2306,6 @@ class AISidebar(QtWidgets.QWidget):
                 entry_label = f"Step {self._plan_step_idx + 1}"
             else:
                 entry_label = "Generated Code"
-            self._code_history.append(entry_label, combined_code)
-            self.sidebar_widget.update_code_badge(self._code_history.count)
-            self.sidebar_widget.flash_code_tab()
             if hasattr(self, 'tree') and self.tree:
                 self.tree.refresh()
             self._refresh_taskboard()
@@ -2236,6 +2350,14 @@ class AISidebar(QtWidgets.QWidget):
                     self.msg("Result", result)
                     self._finish()
                 else:
+                    next_num = self._plan_step_idx + 1
+                    next_title = ""
+                    if self._plan_steps and 0 <= self._plan_step_idx < len(self._plan_steps):
+                        next_title = self._plan_steps[self._plan_step_idx].title
+                    preamble = f"▶️  Next: Step {next_num}/{len(self._plan_steps) or '?'}"
+                    if next_title:
+                        preamble += f" — {next_title}"
+                    self.msg("System", preamble, chat=True)
                     self._defer("next_step", obs)
             else:
                 obs_text = obs or ""
@@ -2276,6 +2398,10 @@ class AISidebar(QtWidgets.QWidget):
         )
         self._pending_msgs = msgs
         self._status_text.setText(f"⚡ Step {step_idx+1}/{len(self._plan_steps)}")
+        # Announce step start in chat for clear visibility
+        if self._plan_steps and 0 <= step_idx < len(self._plan_steps):
+            step_title = self._plan_steps[step_idx].title
+            self.msg("System", f"▶️  Starting step {step_idx+1}: {step_title}", chat=True)
         return self._launch_worker(msgs, self._pending_input)
 
     def _on_mode_changed(self, new_mode):

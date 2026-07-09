@@ -214,6 +214,14 @@ def build_messages_local(user_input: str, observation: str = "",
         history_text: compact text summary of previous rounds
             (user input + code + scene after) so the model knows what exists.
     """
+    if mode == "ask":
+        parts = ["You are a FreeCAD expert assistant. Answer clearly and concisely. Include short ```python examples when helpful, but do NOT generate complete macros unless asked."]
+        if history_text.strip():
+            parts.append(f"─── PREVIOUS ROUNDS ───\n{history_text.strip()}")
+        parts.append(f"─── CURRENT ───\nScene:{observation or ''}")
+        parts.append(f"Question:{user_input}")
+        return [{"role": "user", "content": "\n".join(parts)}]
+
     parts = [LOCAL_SYSTEM_PROMPT]
     if history_text.strip():
         parts.append(f"─── PREVIOUS ROUNDS ───\n{history_text.strip()}")

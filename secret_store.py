@@ -243,7 +243,8 @@ def unprotect_secret(value, purpose):
     if _can_use_dpapi():
         try:
             return _unprotect_windows(value, purpose)
-        except Exception:
+        except Exception as ex:
+            _log_error(f"DPAPI decryption failed for '{purpose}': {ex}")
             return ""
     if value.startswith("__keyring__:"):
         if _can_use_keyring():

@@ -1,0 +1,22 @@
+{
+  "provider": "deepseek",
+  "model": "deepseek/deepseek-chat",
+  "url": "",
+  "provider_label": "DeepSeek",
+  "model_label": "[DeepSeek] DeepSeek Chat",
+  "mode": "build",
+  "theme": "dark",
+  "chat_font_size": 13,
+  "code_font_size": 12,
+  "temperature": 0.49,
+  "max_tokens": 16384,
+  "max_history_length": 50,
+  "retries_per_step": 5,
+  "auto_replan": false,
+  "sandbox_mode": true,
+  "max_defer_attempts": 15,
+  "ollama_url": "http://localhost:11434",
+  "ollama_model": "llama3",
+  "proxy_url": "",
+  "version": 1
+}

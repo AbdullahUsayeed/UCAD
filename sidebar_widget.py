@@ -575,83 +575,14 @@ class SidebarWidget(QtWidgets.QWidget):
             0, lambda: self._on_mode_changed_int(self._mode_combo.currentIndex())
         )
 
-        # ── PANEL 3 — Split: code editor (top) + chat/code tabs (bottom) ──
-        self._chat_panel   = None
-        self._taskboard    = None
-        self._code_history = None
-        self._copilot_editor = None
-
-        self._editor_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        self._editor_splitter.setHandleWidth(2)
-        self._editor_splitter.setStyleSheet(
-            "QSplitter::handle{background:rgba(255,255,255,0.04);}"
-        )
-
-        # Placeholder for the code editor (added later via set_copilot_editor)
-        self._editor_container = QtWidgets.QWidget()
-        self._editor_container.setVisible(False)
-        self._editor_layout = QtWidgets.QVBoxLayout(self._editor_container)
-        self._editor_layout.setContentsMargins(0, 0, 0, 0)
-        self._editor_layout.setSpacing(2)
-        self._editor_splitter.addWidget(self._editor_container)
-
-        # Bottom: tabbed chat / code history
-        self._bottom_panel = QtWidgets.QWidget()
-        self._bottom_layout = QtWidgets.QVBoxLayout(self._bottom_panel)
-        self._bottom_layout.setContentsMargins(0, 0, 0, 0)
-        self._bottom_layout.setSpacing(2)
-
-        # Toolbar row: Apply button hidden until needed
-        self._apply_bar = QtWidgets.QWidget()
-        self._apply_bar.setVisible(False)
-        ab_layout = QtWidgets.QHBoxLayout(self._apply_bar)
-        ab_layout.setContentsMargins(2, 0, 2, 0)
-        ab_layout.setSpacing(4)
-        self._apply_lbl = QtWidgets.QLabel("")
-        self._apply_lbl.setStyleSheet(
-            "color:#4a4f57;font-size:8px;background:transparent;"
-        )
-        ab_layout.addWidget(self._apply_lbl, 1)
-        self._apply_btn = QtWidgets.QPushButton("APPLY TO EDITOR")
-        self._apply_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {_sGS1};
-                color: {_sCYAN};
-                border: 1px solid {_sBDR};
-                border-top: 1px solid {_sEDGE};
-                border-radius: 5px;
-                font-size: 8px;
-                font-weight: 700;
-                letter-spacing: 0.5px;
-                padding: 2px 10px;
-            }}
-            QPushButton:hover {{
-                background: rgba(0,240,255,0.06);
-                border-color: {_sBACT};
-            }}
-        """)
-        self._apply_btn.setFixedHeight(22)
-        self._apply_btn.setVisible(False)
-        ab_layout.addWidget(self._apply_btn)
-        self._bottom_layout.addWidget(self._apply_bar)
-
-        # Tab widget
-        self._tab_widget = QtWidgets.QTabWidget()
-        self._tab_widget.setStyleSheet(_SS_TABS)
-        self._chat_tab = QtWidgets.QWidget()
-        self._chat_tab.setStyleSheet("background: transparent;")
-        self._chat_tab_layout = QtWidgets.QVBoxLayout(self._chat_tab)
+        # ── PANEL 3 — Chat panel (takes all space between selectors and input) ──
+        self._chat_panel = None
+        self._taskboard  = None
+        self._chat_tab_layout = QtWidgets.QVBoxLayout()
         self._chat_tab_layout.setContentsMargins(4, 4, 4, 4)
         self._chat_tab_layout.setSpacing(4)
-        self._tab_widget.addTab(self._chat_tab, "CHAT")
-        self._bottom_layout.addWidget(self._tab_widget, 1)
 
-        self._editor_splitter.addWidget(self._bottom_panel)
-
-        # Default split ratio: 40% editor / 60% tabs
-        self._editor_splitter.setSizes([200, 300])
-
-        root.addWidget(self._editor_splitter, 1)
+        root.addLayout(self._chat_tab_layout, 1)
 
         # ── PANEL 4 — Input area ────────────────────────────────────
         self._inp_card = _GlassPanel(radius=14, glass_color=_GS1, accent_top=True)
@@ -819,48 +750,6 @@ class SidebarWidget(QtWidgets.QWidget):
     def set_taskboard(self, taskboard):
         self._taskboard = taskboard
         self._chat_tab_layout.addWidget(taskboard)
-
-    def set_code_history(self, widget):
-        self._code_history = widget
-        self._tab_widget.addTab(widget, "CODE (0)")
-
-    def set_copilot_editor(self, editor):
-        self._copilot_editor = editor
-        self._editor_layout.addWidget(editor, 1)
-        self._editor_container.setVisible(True)
-
-    def show_apply_bar(self, label: str = ""):
-        self._apply_lbl.setText(label)
-        self._apply_bar.setVisible(True)
-        self._apply_btn.setVisible(True)
-
-    def hide_apply_bar(self):
-        self._apply_bar.setVisible(False)
-        self._apply_btn.setVisible(False)
-
-    @property
-    def apply_button(self) -> QtWidgets.QPushButton:
-        return self._apply_btn
-
-    @property
-    def apply_label(self) -> QtWidgets.QLabel:
-        return self._apply_lbl
-
-    def update_code_badge(self, n):
-        if self._code_history is not None:
-            idx = self._tab_widget.indexOf(self._code_history)
-            if idx >= 0:
-                self._tab_widget.setTabText(idx, f"CODE ({n})")
-
-    def flash_code_tab(self):
-        if self._code_history is None:
-            return
-        idx = self._tab_widget.indexOf(self._code_history)
-        if idx < 0:
-            return
-        orig = self._tab_widget.tabText(idx)
-        self._tab_widget.setTabText(idx, f"\u2605 {orig}")
-        QtCore.QTimer.singleShot(1200, lambda: self._tab_widget.setTabText(idx, orig))
 
     @property
     def mode_combo(self):        return self._mode_combo

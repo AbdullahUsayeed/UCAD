@@ -423,12 +423,36 @@ pipe.Profile = [start_sk, mid_sk, end_sk]
             flags.append("Built-in Assembly workbench available (import Assembly)")
         return "\n".join(flags)
 
+    ASK_TIER_0 = """## FREECAD REFERENCE
+
+### CAPABILITY SCOPE
+You have full access to FreeCAD's Python API: Part, Sketcher, PartDesign, Draft, Mesh, Assembly, TechDraw, FreeCAD, FreeCADGui.
+
+### KEY WORKBENCHES
+- **Part**: Primitives (Box, Cylinder, Sphere), boolean ops (Cut, Fuse, Common), extrude/revolve
+- **PartDesign**: Body → Sketch on plane → Pad/Pocket/Revolution features
+- **Draft**: 2D drawing tools, arrays, text, dimension lines
+- **Sketcher**: 2D constrained sketches for PartDesign features
+- **Assembly**: Constrain parts together (v1.0+)
+
+### COMMON API
+- `App.ActiveDocument` / `App.newDocument("Name")`
+- `obj.Shape` for geometry properties, `obj.Placement` for position
+- `doc.recompute()` to update after changes
+- `FreeCADGui.Selection.getSelection()` for selected objects
+- `FreeCAD.Vector(x, y, z)` for 3D points
+- `Part.show(shape)` to display a shape in the document
+"""
+
     def build(self, user_message, mode="build"):
         """Assemble the knowledge base for this request.
 
         Returns the full knowledge section for the system prompt.
         """
-        sections = [self.TIER_0]
+        if mode == "ask":
+            sections = [self.ASK_TIER_0]
+        else:
+            sections = [self.TIER_0]
         sections.append(self.version_flags())
 
         ml = user_message.lower() if user_message else ""

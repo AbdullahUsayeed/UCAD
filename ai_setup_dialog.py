@@ -36,13 +36,16 @@ def _test_connection(provider, api_key, api_url="", proxy_url=""):
     if provider not in PROVIDER_ADAPTERS:
         return False, f"Unknown provider: {provider}"
 
-    # Quick network diagnostics
+    # Quick network diagnostics — include Anthropic since it uses a different API
     diag = {}
-    for test_host in ["api.deepseek.com", "api.openai.com", "google.com"]:
+    diag_hosts = ["api.deepseek.com", "api.openai.com", "google.com"]
+    if provider == "anthropic":
+        diag_hosts.append("api.anthropic.com")
+    for test_host in diag_hosts:
         ok, detail = _check_host_reachable(test_host)
         diag[test_host] = (ok, detail)
     failed = [h for h, (ok, _) in diag.items() if not ok]
-    if len(failed) >= 3:
+    if len(failed) >= len(diag_hosts):
         return False, (
             "No internet connectivity detected:\n" +
             "\n".join(f"  {h}: {'❌' if h in failed else '✅'} {d}" for h, (_, d) in diag.items()) +
@@ -64,19 +67,44 @@ def _test_connection(provider, api_key, api_url="", proxy_url=""):
             return True, "Connected! (200 OK)"
         return False, "Empty response"
     except Exception as ex:
+        exc_type = type(ex).__name__
         msg = str(ex)
+        # Check by exception type first (more reliable than string matching)
+        try:
+            import litellm
+            if hasattr(litellm, 'AuthenticationError') and isinstance(ex, litellm.AuthenticationError):
+                return False, f"{exc_type}: Invalid API key — check the key at the provider's console"
+            if hasattr(litellm, 'BadRequestError') and isinstance(ex, litellm.BadRequestError):
+                return False, f"{exc_type}: Bad request — check model name or message format\n{msg[:200]}"
+            if hasattr(litellm, 'PermissionError') and isinstance(ex, litellm.PermissionError):
+                return False, f"{exc_type}: Key lacks permissions (403)"
+            if hasattr(litellm, 'NotFoundError') and isinstance(ex, litellm.NotFoundError):
+                return False, f"{exc_type}: Endpoint or model not found — check the model name\n{msg[:200]}"
+            if hasattr(litellm, 'RateLimitError') and isinstance(ex, litellm.RateLimitError):
+                return True, f"{exc_type}: Rate limited (429) — but key is valid"
+        except ImportError:
+            pass
+        # Fallback: match by error text
+        if "authentication_error" in msg:
+            return False, f"{exc_type}: Invalid Anthropic API key — check the key at https://console.anthropic.com/settings/keys"
+        if "permission_error" in msg:
+            return False, f"{exc_type}: Anthropic key lacks permissions"
+        if "rate_limit_error" in msg:
+            return True, f"{exc_type}: Rate limited — but key is valid"
+        if "invalid_api_key" in msg:
+            return False, f"{exc_type}: Invalid API key"
         if "401" in msg:
-            return False, "Invalid API key (401 Unauthorized)"
+            return False, f"{exc_type}: Invalid API key (401 Unauthorized)"
         if "403" in msg:
-            return False, "Access forbidden (403) — key may lack permissions"
+            return False, f"{exc_type}: Access forbidden (403) — key may lack permissions"
         if "429" in msg:
-            return True, "Rate limited (429) — but key is valid"
+            return True, f"{exc_type}: Rate limited (429) — but key is valid"
         if "500" in msg or "Internal Server Error" in msg:
-            return False, "Provider server error (500) — try again later or check provider status"
+            return False, f"{exc_type}: Provider server error (500) — try again later"
         if "502" in msg:
-            return False, "Provider bad gateway (502) — provider may be down"
+            return False, f"{exc_type}: Provider bad gateway (502) — provider may be down"
         if "503" in msg:
-            return False, "Provider unavailable (503) — try again later"
+            return False, f"{exc_type}: Provider unavailable (503) — try again later"
         if "Connection refused" in msg or "connection refused" in msg or "10061" in msg:
             return False, (
                 "Connection refused — your network/firewall is blocking the connection.\n\n"
@@ -87,15 +115,15 @@ def _test_connection(provider, api_key, api_url="", proxy_url=""):
         if "Name or service not known" in msg or "getaddrinfo" in msg:
             return False, "DNS lookup failed — check the API URL"
         if "timed out" in msg or "timeout" in msg:
-            return False, "Request timed out — check the API URL or network"
+            return False, f"{exc_type}: Request timed out — check the API URL or network"
         if "api_key" in msg.lower() or "invalid key" in msg.lower():
-            return False, "Invalid API key"
+            return False, f"{exc_type}: Invalid API key"
         if "No module named" in msg:
             pkg = msg.split("'")[1] if "'" in msg else "litellm"
             return False, f"Missing package: run 'pip install {pkg}'"
         if "SSL" in msg:
-            return False, "SSL error — check your network/VPN settings"
-        return False, f"Error: {msg[:300]}"
+            return False, f"{exc_type}: SSL error — check your network/VPN settings"
+        return False, f"{exc_type}: {msg[:350]}"
 
 
 def _test_ollama(url):
@@ -216,6 +244,15 @@ def show_ai_setup_dialog(sidebar):
         key = std_key.text().strip()
         url = ollama_url_input.text().strip()
         proxy = proxy_input.text().strip()
+
+        # Anthropic key format check
+        if prov == "anthropic" and key and not key.startswith("sk-ant-"):
+            std_status.setText(
+                "\u26a0\ufe0f Anthropic keys start with 'sk-ant-' — verify you pasted the correct key"
+            )
+            std_status.setStyleSheet("color:#f7c96a;font-size:11px;")
+            return
+
         std_status.setText("\u23f3 Testing...")
         std_status.setStyleSheet("color:#f7c96a;font-size:11px;")
         std_test.setEnabled(False)
