@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
+  <name>UCAD Assistant</name>
+  <description>AI CAD agent for FreeCAD — build, edit, and automate parametric design through natural language chat. Supports PCB enclosure generation, DXF processing, gear design, and multi-step autonomous plan execution with transaction rollback.</description>
+  <icon>Resources/icons/ai_companion.svg</icon>
+  <version>1.0.2</version>
+  <date>2026-07-09</date>
+  <maintainer email="usayeed@example.com">Usayeed</maintainer>
+  <license>LicenseRef-Proprietary</license>
+  <url type="repository" branch="master">https://github.com/AbdullahUsayeed/UCAD</url>
+  <url type="bugtracker">https://github.com/AbdullahUsayeed/UCAD/issues</url>
+  <url type="readme">https://github.com/AbdullahUsayeed/UCAD/blob/master/README.md</url>
+  <url type="license">https://github.com/AbdullahUsayeed/UCAD/blob/master/LICENSE</url>
+
+  <!-- FreeCAD version requirements -->
+  <freecadmin>0.21</freecadmin>
+  <freecadmax>99.99</freecadmax>
+
+  <!-- Python deps that FreeCAD Addon Manager can pip-install -->
+  <pythondeps>
+    <dep>ezdxf</dep>
+    <dep>shapely</dep>
+  </pythondeps>
+
+  <!-- Post-install script — installs vendored deps -->
+  <post_install>post_install.py</post_install>
+
+  <content>
+    <workbench>
+      <name>UCAD Assistant</name>
+      <subdirectory>./</subdirectory>
+      <icon>Resources/icons/ai_companion.svg</icon>
+    </workbench>
+  </content>
+</package>

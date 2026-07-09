@@ -5,7 +5,7 @@ __pycache__/
 *.cover
 .coverage
 dist/
-build/launcher/
+build/
 *.tmp
 server/node_modules/
 server/.wrangler/

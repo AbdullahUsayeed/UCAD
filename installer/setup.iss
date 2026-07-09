@@ -45,7 +45,8 @@ Name: "freecad_download"; Description: "Download FreeCAD (if not installed)"; Ty
 ; Launcher
 Source: "..\dist\UCAD Launcher\*"; DestDir: "{app}\Launcher"; Flags: recursesubdirs createallsubdirs; Components: launcher
 ; Plugin (Mod) — will be referenced by -M flag, not copied into FreeCAD
-Source: "..\AICompanion\*"; DestDir: "{app}\Runtime\AICompanion"; Flags: recursesubdirs createallsubdirs exclude=".git\*|__pycache__\*|.pyc|.coverage|.pytest_cache\*"; Components: plugin
+; Uses pre-obfuscated source (run scripts\protect_source.py first)
+Source: "..\build\protected_mod\*"; DestDir: "{app}\Runtime\AICompanion"; Flags: recursesubdirs createallsubdirs; Components: plugin
 ; Config defaults
 Source: "..\installer\default_config.json"; DestDir: "{app}\Config"; Flags: onlyifdoesntexist
 

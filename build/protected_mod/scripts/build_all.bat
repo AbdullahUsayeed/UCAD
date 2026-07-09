@@ -34,25 +34,15 @@ if /I "%~1"=="test" (
     echo.
 )
 
-REM Step 1: Obfuscate source code
-echo [1/5] Obfuscating source code (stripping comments/docstrings)...
-cd /d "%PROJECT_DIR%"
-python scripts\protect_source.py
-if !ERRORLEVEL! neq 0 (
-    echo ERROR: Source protection failed!
-    exit /b 1
-)
-echo.
-
-REM Step 2: Verify version
-echo [2/5] Checking version...
+REM Step 1: Verify version
+echo [1/4] Checking version...
 cd /d "%PROJECT_DIR%"
 for /f "tokens=2 delims=><" %%a in ('findstr "<version>" package.xml') do set VERSION=%%a
 echo Version: %VERSION%
 echo.
 
 REM Step 2: Build launcher
-echo [3/5] Building launcher (PyInstaller)...
+echo [2/4] Building launcher (PyInstaller)...
 cd /d "%PROJECT_DIR%\launcher"
 python build_launcher.py
 if !ERRORLEVEL! neq 0 (
@@ -62,7 +52,7 @@ if !ERRORLEVEL! neq 0 (
 echo.
 
 REM Step 3: Verify launcher executable
-echo [4/5] Verifying launcher...
+echo [3/4] Verifying launcher...
 if not exist "%DIST_DIR%\UCAD Launcher\UCAD Launcher.exe" (
     echo ERROR: Launcher executable not found!
     exit /b 1
@@ -71,7 +61,7 @@ echo Launcher executable: %DIST_DIR%\UCAD Launcher\UCAD Launcher.exe
 echo.
 
 REM Step 4: Build installer
-echo [5/5] Building installer (Inno Setup)...
+echo [4/4] Building installer (Inno Setup)...
 
 set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if not exist %ISCC% (
