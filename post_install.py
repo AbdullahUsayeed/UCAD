@@ -24,6 +24,29 @@ def _log(msg):
         print(msg)
 
 
+MIN_FREECAD_VER = (1, 1, 0)
+
+def _get_freecad_version():
+    """Return FreeCAD version tuple or None."""
+    try:
+        import FreeCAD
+        return (FreeCAD.Version[0], FreeCAD.Version[1], FreeCAD.Version[2])
+    except Exception:
+        return None
+
+def _check_freecad_version():
+    """Warn if FreeCAD is too old."""
+    ver = _get_freecad_version()
+    if ver is None:
+        _log("Could not detect FreeCAD version")
+        return
+    if ver < MIN_FREECAD_VER:
+        _log(
+            f"WARNING: FreeCAD {'.'.join(str(v) for v in ver)} is too old. "
+            f"UCAD requires FreeCAD {'.'.join(str(v) for v in MIN_FREECAD_VER)} or later. "
+            "Download the latest from https://github.com/FreeCAD/FreeCAD/releases"
+        )
+
 def _find_python():
     """Find the Python interpreter bundled with FreeCAD."""
     candidates = [
