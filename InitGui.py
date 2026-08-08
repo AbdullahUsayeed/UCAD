@@ -4,18 +4,15 @@ try: __file__
 except NameError: __file__ = _os.path.join(FreeCAD.getUserAppDataDir(), "Mod", "AICompanion", "InitGui.py")
 _ADDON_DIR = _os.path.dirname(_os.path.abspath(__file__))
 
-# Detect launcher launch
-if _os.environ.get("UCAD_LAUNCHED"):
-    FreeCAD.Console.PrintLog("[UCAD] Launched by UCAD Launcher\n")
-
-# Bootstrap vendored dependencies — must be first
 _deps_dir = _os.path.join(_ADDON_DIR, ".python-deps")
 if _os.path.isdir(_deps_dir) and _deps_dir not in _sys.path:
     _sys.path.insert(0, _deps_dir)
 del _deps_dir
-__version__ = "1.0.0"
+__version__ = "1.0.2"
 
-# ── Verify critical dependencies are available ────────────
+if _os.environ.get("UCAD_LAUNCHED"):
+    FreeCAD.Console.PrintLog("[UCAD] Launched by UCAD Launcher\n")
+
 _MISSING_DEPS = []
 for _pkg in ("litellm", "ezdxf", "shapely"):
     try:
@@ -39,27 +36,19 @@ if _MISSING_DEPS:
     del _msg
 del _MISSING_DEPS, _pkg
 
-# ── Startup noise suppression ────────────────────────────
-# External addons (ConstraintDesign, KiCadStepUp, etc.) may emit Python
-# warnings or FreeCAD console noise during import.  We filter known
-# patterns so the Report View stays usable for the user.
 import warnings
 
-# 1. Python-level filter — suppresses DeprecationWarning, FutureWarning, etc.
-#    from all modules during the import phase.
 _IGNORE_CATS = (FutureWarning, DeprecationWarning, ImportWarning, UserWarning)
 for _cat in _IGNORE_CATS:
     warnings.filterwarnings("ignore", category=_cat)
 
-# 2. FreeCAD console filter — suppresses PrintWarning/PrintLog lines whose
-#    text matches known noisy externals.
 _SUPPRESS_PATTERNS = [
     "constraintdesign", "kicadstepup", "kicad", "stepup",
     "no module named", "failed to load", "deprecated",
 ]
 
 def _make_filter(orig_fn):
-    _patterns = _SUPPRESS_PATTERNS  # capture at definition time (avoids runtime global lookup issues)
+    _patterns = _SUPPRESS_PATTERNS
     def wrapper(msg, *a, **kw):
         ml = msg.lower() if isinstance(msg, str) else ""
         if any(p in ml for p in _patterns):
@@ -77,7 +66,6 @@ try:
 except Exception:
     pass
 
-# 3. Restore original functions after 15 s so user-generated warnings are not lost.
 import threading
 def _restore(orig_warn=_ORIG_WARN, orig_log=_ORIG_LOG, ignore_cats=_IGNORE_CATS,
              _warnings=warnings, _FreeCAD_Console=FreeCAD.Console):
@@ -122,7 +110,6 @@ class AICompanionCommand:
         try:
             pixmap = _make_icon()
         except Exception:
-            # Never block command registration due to icon rendering/import issues.
             pixmap = ""
         return {
             'Pixmap': pixmap,
@@ -139,7 +126,6 @@ class AICompanionCommand:
             import traceback
             FreeCAD.Console.PrintError(f"AICompanion: {e}\n{traceback.format_exc()}\n")
 
-# Register command
 try:
     FreeCADGui.addCommand('AI_Companion_Command', AICompanionCommand())
 except Exception as e:
@@ -147,7 +133,7 @@ except Exception as e:
 
 class AICompanionWorkbench(FreeCADGui.Workbench):
     MenuText = "UCAD Assistant"
-    ToolTip = "Usayeed AI CAD Agent v1.0.0: Sketches, Booleans, Templates, Multi-Docs"
+    ToolTip = "Usayeed AI CAD Agent v1.0.0"
     
     def Initialize(self):
         import traceback
@@ -170,8 +156,65 @@ class AICompanionWorkbench(FreeCADGui.Workbench):
     def GetClassName(self):
         return "Gui::PythonWorkbench"
 
-# Register workbench
 try:
     FreeCADGui.addWorkbench(AICompanionWorkbench())
 except Exception as e:
     FreeCAD.Console.PrintError(f"AICompanion: failed to register workbench: {e}\n")
+
+def _ask_telemetry_consent():
+    """Show a simple consent dialog. Returns True if the user agreed."""
+    try:
+        from compat import QtWidgets, QtCore
+        mw = FreeCADGui.getMainWindow()
+        parent = mw if mw else None
+        box = QtWidgets.QMessageBox(parent)
+        box.setWindowTitle("UCAD Assistant — Usage Statistics")
+        box.setIcon(QtWidgets.QMessageBox.Question)
+        box.setText(
+            "Help improve UCAD Assistant.\n\n"
+            "May UCAD Assistant collect anonymous usage statistics "
+            "(CAD commands and AI-generated scripts) and send them to "
+            "our server to train better models?"
+        )
+        box.setInformativeText(
+            "No document data or personal information is collected. "
+            "You can change this anytime in Settings."
+        )
+        accept = box.addButton("I Agree", QtWidgets.QMessageBox.AcceptRole)
+        box.addButton("No Thanks", QtWidgets.QMessageBox.RejectRole)
+        box.setDefaultButton(accept)
+        box.exec_()
+        return box.clickedButton() is accept
+    except Exception:
+        return False
+
+
+def _maybe_start_telemetry():
+    """Start the collector only if the user has agreed to telemetry."""
+    from telemetry import TelemetryCollector, has_consent, record_consent
+    consent = has_consent()
+    if consent is None:
+        consent = _ask_telemetry_consent()
+        record_consent(consent)
+        FreeCAD.Console.PrintLog(
+            "[AICompanion:Telemetry] Consent "
+            + ("accepted" if consent else "declined") + "\n"
+        )
+    if not consent:
+        return
+    try:
+        tc = TelemetryCollector()
+        FreeCADGui._telemetry = tc
+        tc.install_do_command_hook()
+        tc.install_run_command_hook()
+        tc.install_report_view_hook()
+        tc._hook_python_console()
+    except Exception:
+        pass
+
+
+try:
+    import threading
+    threading.Timer(2.0, _maybe_start_telemetry).start()
+except Exception:
+    pass

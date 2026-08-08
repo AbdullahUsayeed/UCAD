@@ -1,3 +1,2 @@
-# Init.py - FreeCAD AI Companion Workbench
-# Required by FreeCAD to discover this module under Mod/.
-# All initialization (workbench registration, commands) is in InitGui.py.
+# Init.py — FreeCAD AI Companion module bootstrap.
+# TelemetryCollector is created in InitGui.py where FreeCADGui is available.

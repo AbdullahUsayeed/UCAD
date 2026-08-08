@@ -1,0 +1,41 @@
+# Alternative containerized deployment (see deploy.sh for the systemd path).
+#
+# Usage:
+#   export TELEMETRY_API_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+#   docker compose up -d
+#
+# Exposes the app on 127.0.0.1:7999 only. Put nginx/caddy in front for TLS.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a strong password}
+      POSTGRES_DB: telemetry
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry -d telemetry"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://telemetry:${POSTGRES_PASSWORD}@db:5432/telemetry
+      TELEMETRY_API_KEY: ${TELEMETRY_API_KEY:?set an API key}
+      HOST: 0.0.0.0
+      PORT: "7999"
+    ports:
+      - "127.0.0.1:7999:7999"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

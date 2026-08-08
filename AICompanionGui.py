@@ -1972,6 +1972,8 @@ class AISidebar(QtWidgets.QWidget):
                         return
                 if code:
                     success, message = self.orch.execute_code(code)
+                    if hasattr(FreeCADGui, '_telemetry') and FreeCADGui._telemetry:
+                        FreeCADGui._telemetry.record_ai_script(self._pending_input, code, success, message)
                     obs = self.orch.capture_observation()
                     icon = "\u2705" if success else "\u274c"
                     result_text = f"{icon} Enclosure: {message}"
@@ -1989,6 +1991,8 @@ class AISidebar(QtWidgets.QWidget):
             if self._mode == "dxf":
                 if code:
                     success, message = self.orch.execute_code(code)
+                    if hasattr(FreeCADGui, '_telemetry') and FreeCADGui._telemetry:
+                        FreeCADGui._telemetry.record_ai_script(self._pending_input, code, success, message)
                     obs = self.orch.capture_observation()
                     icon = "✅" if success else "❌"
                     result_text = f"{icon} DXF: {message}"
@@ -2031,6 +2035,8 @@ class AISidebar(QtWidgets.QWidget):
                     self.msg("Error", f"The local model produced code but execution failed: {message[:300]}", chat=True)
                 # Record result so next request has scene context
                 self.orch.record_result(self._pending_input, code, success, message, 0)
+                if hasattr(FreeCADGui, '_telemetry') and FreeCADGui._telemetry:
+                    FreeCADGui._telemetry.record_ai_script(self._pending_input, code, success, message)
                 self._finish()
                 return
 
@@ -2161,6 +2167,8 @@ class AISidebar(QtWidgets.QWidget):
                     else:
                         self.msg("Error", f"Safe fallback also failed: {fb_message}", chat=True)
                         self.msg("Error", "⛔ AI code and safe fallback both failed. Try describing your request differently or check the FreeCAD document state.", chat=True)
+                        if hasattr(FreeCADGui, '_telemetry') and FreeCADGui._telemetry:
+                            FreeCADGui._telemetry.record_ai_script(self._pending_input, combined_code, False, message)
                         self._session_metrics["attempts_per_step"].append(self._retries + 1)
                         self._session_metrics["retries_per_step"].append(self._retries)
                         self._session_metrics["step_outcomes"].append("failed")
@@ -2257,9 +2265,13 @@ class AISidebar(QtWidgets.QWidget):
                 self._session_metrics["retries_per_step"].append(self._retries)
                 self._session_metrics["step_outcomes"].append("failed")
                 self.orch.record_result(self._pending_input, combined_code, False, message, self._retries)
+                if hasattr(FreeCADGui, '_telemetry') and FreeCADGui._telemetry:
+                    FreeCADGui._telemetry.record_ai_script(self._pending_input, combined_code, False, message)
                 self._update_scene_fingerprint()
                 self._finish()
                 return
+            if hasattr(FreeCADGui, '_telemetry') and FreeCADGui._telemetry:
+                FreeCADGui._telemetry.record_ai_script(self._pending_input, combined_code, True, message)
             self._plan_step_idx += 1
             self._session_metrics["attempts_per_step"].append(self._retries + 1)
             self._session_metrics["retries_per_step"].append(self._retries)
@@ -3185,10 +3197,6 @@ def show_sidebar():
             _dock_instance.raise_()
             si = _dock_instance.widget()
             sw = getattr(si, 'sidebar_widget', None)
-            if sw and hasattr(sw, 'update_license_banner'):
-                sw.update_license_banner()
-                if hasattr(sw, 'show_license_nag'):
-                    sw.show_license_nag(si)
         except Exception:
             _dock_instance = None
         else:
@@ -3206,12 +3214,6 @@ def show_sidebar():
             dock.setVisible(True)
             dock.raise_()
             _dock_instance = dock
-            si = dock.widget()
-            sw = getattr(si, 'sidebar_widget', None)
-            if sw and hasattr(sw, 'update_license_banner'):
-                sw.update_license_banner()
-                if hasattr(sw, 'show_license_nag'):
-                    sw.show_license_nag(si)
             return dock
 
         # First-time creation: wrap AISidebar in a QDockWidget
@@ -3228,11 +3230,6 @@ def show_sidebar():
         si = sidebar
         _dock_instance = dock
         dock.show()
-        sw = getattr(sidebar, 'sidebar_widget', None)
-        if sw and hasattr(sw, 'update_license_banner'):
-            sw.update_license_banner()
-        if sw and hasattr(sw, 'show_license_nag'):
-            sw.show_license_nag(sidebar)
         return dock
     finally:
         _creating_dock = False

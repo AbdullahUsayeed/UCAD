@@ -1,0 +1,32 @@
+[Unit]
+Description=AICompanion Telemetry receiver (FastAPI + PostgreSQL)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=telemetry
+Group=telemetry
+WorkingDirectory=/opt/telemetry
+EnvironmentFile=/etc/telemetry/env
+ExecStart=/opt/telemetry/venv/bin/gunicorn server:app \
+    --workers ${GUNICORN_WORKERS} \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind ${HOST}:${PORT} \
+    --access-logfile - \
+    --error-logfile - \
+    --timeout 60 \
+    --graceful-timeout 30 \
+    --keep-alive 5
+
+Restart=always
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/telemetry
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
