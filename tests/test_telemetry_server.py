@@ -13,6 +13,7 @@ from sqlalchemy import text
 _db_path = os.path.join(os.path.dirname(__file__), "_test_telemetry.db")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
 os.environ["TELEMETRY_API_KEY"] = "test-key"
+os.environ["TELEMETRY_ADMIN_KEY"] = "admin-key"
 
 from sqlalchemy import select
 
@@ -40,6 +41,16 @@ async def client():
     async with AsyncClient(
         transport=transport, base_url="http://test",
         headers={"X-Api-Key": "test-key"},
+    ) as ac:
+        yield ac
+
+
+@pytest.fixture
+async def admin_client():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport, base_url="http://test",
+        headers={"X-Api-Key": "admin-key"},
     ) as ac:
         yield ac
 
@@ -123,7 +134,7 @@ async def test_upsert_machine_on_multiple_sessions(client):
 
 
 @pytest.mark.asyncio
-async def test_delete_machine_events(client):
+async def test_delete_machine_events(admin_client):
     payload = {
         "session_id": "sess-delete",
         "machine_id": "mach-delete",
@@ -131,19 +142,19 @@ async def test_delete_machine_events(client):
             {"command": "delete_me", "timestamp": time.time(), "source": "gui_command", "workbench": "Part"}
         ],
     }
-    resp = await client.post("/api/events", json=payload)
+    resp = await admin_client.post("/api/events", json=payload)
     assert resp.status_code == 200
 
-    resp = await client.delete("/api/events/mach-delete")
+    resp = await admin_client.delete("/api/events/mach-delete")
     assert resp.status_code == 200
     assert resp.json()["status"] == "deleted"
 
-    resp = await client.delete("/api/events/mach-delete")
+    resp = await admin_client.delete("/api/events/mach-delete")
     assert resp.json()["status"] == "not_found"
 
 
 @pytest.mark.asyncio
-async def test_get_machine_events(client):
+async def test_get_machine_events(admin_client):
     now = time.time()
     payload = {
         "session_id": "sess-get",
@@ -153,29 +164,80 @@ async def test_get_machine_events(client):
             {"command": "second", "timestamp": now + 1, "source": "console_input", "workbench": "Part"},
         ],
     }
-    resp = await client.post("/api/events", json=payload)
+    resp = await admin_client.post("/api/events", json=payload)
     assert resp.status_code == 200
 
-    resp = await client.get("/api/events/mach-get")
+    resp = await admin_client.get("/api/events/mach-get")
     assert resp.status_code == 200
     events = resp.json()
     assert len(events) == 2
 
-    resp = await client.get("/api/events/mach-get?source=console_input")
+    resp = await admin_client.get("/api/events/mach-get?source=console_input")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
     assert resp.json()[0]["command"] == "second"
 
 
 @pytest.mark.asyncio
-async def test_get_stats(client):
-    resp = await client.get("/api/stats")
+async def test_get_stats(admin_client):
+    resp = await admin_client.get("/api/stats")
     assert resp.status_code == 200
     data = resp.json()
     assert "total_machines" in data
     assert "total_events" in data
     assert "total_sessions" in data
     assert "events_last_24h" in data
+
+
+@pytest.mark.asyncio
+async def test_ingest_key_cannot_read_or_delete(client):
+    """The public ingest key must NOT grant read/delete/stats access."""
+    payload = {
+        "session_id": "sess-ingest-only",
+        "machine_id": "mach-ingest-only",
+        "events": [
+            {"command": "x", "timestamp": time.time(), "source": "gui_command", "workbench": "Part"}
+        ],
+    }
+    # Ingest works with the ingest key
+    resp = await client.post("/api/events", json=payload)
+    assert resp.status_code == 200
+
+    # But read/delete/stats must be denied with the ingest key
+    resp = await client.get("/api/events/mach-ingest-only")
+    assert resp.status_code == 403
+
+    resp = await client.get("/api/stats")
+    assert resp.status_code == 403
+
+    resp = await client.delete("/api/events/mach-ingest-only")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_key_can_ingest_and_manage(admin_client):
+    """The admin key is a superset: it can ingest AND read/delete/stats."""
+    payload = {
+        "session_id": "sess-admin",
+        "machine_id": "mach-admin",
+        "events": [
+            {"command": "x", "timestamp": time.time(), "source": "gui_command", "workbench": "Part"}
+        ],
+    }
+    resp = await admin_client.post("/api/events", json=payload)
+    assert resp.status_code == 200
+
+    resp = await admin_client.get("/api/events/mach-admin")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+    resp = await admin_client.get("/api/stats")
+    assert resp.status_code == 200
+    assert resp.json()["total_events"] == 1
+
+    resp = await admin_client.delete("/api/events/mach-admin")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
 
 
 @pytest.mark.asyncio

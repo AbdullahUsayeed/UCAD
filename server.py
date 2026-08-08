@@ -1,15 +1,23 @@
 """
-server.py — Telemetry receiver with PostgreSQL backend (FastAPI).
+server.py — Telemetry receiver with SQLite/PostgreSQL backend (FastAPI).
 
 Run locally for testing:
-    pip install fastapi uvicorn pydantic sqlalchemy asyncpg
-    set DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/telemetry
-    set TELEMETRY_API_KEY=your-secret
+    pip install fastapi uvicorn pydantic sqlalchemy asyncpg aiosqlite
+    set DATABASE_URL=sqlite+aiosqlite:///telemetry.db
+    set TELEMETRY_API_KEY=your-ingest-secret
+    set TELEMETRY_ADMIN_KEY=your-admin-secret
     python server.py
+
+Auth model:
+    - TELEMETRY_API_KEY  — public ingest token shipped inside the addon.
+      Grants POST /api/events ONLY.
+    - TELEMETRY_ADMIN_KEY — server-only secret (never shipped). Required for
+      GET/DELETE /api/events/{machine_id} and GET /api/stats. If unset, those
+      read/delete endpoints are disabled (403).
 
 Production (recommended):
     - Run with gunicorn + uvicorn workers behind nginx (see deploy/).
-    - Set DATABASE_URL and TELEMETRY_API_KEY in /etc/telemetry/env.
+    - Set DATABASE_URL, TELEMETRY_API_KEY, TELEMETRY_ADMIN_KEY in /etc/telemetry/env.
     - Terminate TLS at nginx (get a domain first so clients trust the cert).
 """
 
@@ -44,6 +52,7 @@ logger = logging.getLogger("telemetry")
 _RATE_LIMIT_WINDOW = 60
 _RATE_LIMIT_MAX = 300
 _API_KEY = os.getenv("TELEMETRY_API_KEY", "")
+_ADMIN_KEY = os.getenv("TELEMETRY_ADMIN_KEY", "")
 _requests: dict = {}
 
 
@@ -57,21 +66,35 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
-def _authorized(request: Request) -> bool:
-    # Fail closed: if no API key is configured, deny all ingest requests
-    # rather than silently exposing the endpoint to the public.
-    if not _API_KEY:
-        return False
+def _presented_key(request: Request) -> str:
     got = request.headers.get("x-api-key") or request.headers.get("authorization") or ""
     if got.startswith("Bearer "):
         got = got[7:].strip()
-    return got == _API_KEY
+    return got
+
+
+def _has_valid_key(request: Request) -> bool:
+    """Any valid key (ingest OR admin) passes the middleware gate."""
+    key = _presented_key(request)
+    return bool(key) and (key == _API_KEY or key == _ADMIN_KEY)
+
+
+def _authorized_admin(request: Request) -> bool:
+    """Admin-only access for read/delete/stats. Fails closed if unset."""
+    if not _ADMIN_KEY:
+        return False
+    return _presented_key(request) == _ADMIN_KEY
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if not _API_KEY:
         logger.warning("TELEMETRY_API_KEY is NOT set — ingest endpoint is OPEN to the public.")
+    if not _ADMIN_KEY:
+        logger.warning(
+            "TELEMETRY_ADMIN_KEY is NOT set — read/delete/stats endpoints "
+            "are DISABLED (only ingest via POST works)."
+        )
     await init_db()
     logger.info("Telemetry service started.")
     yield
@@ -114,7 +137,7 @@ class StatsResponse(BaseModel):
 async def auth_and_rate_limit(request: Request, call_next):
     # /health stays open so clients can probe reachability during startup.
     if request.url.path != "/health":
-        if not _authorized(request):
+        if not _has_valid_key(request):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "unauthorized — missing/invalid API key"},
@@ -202,7 +225,10 @@ async def receive_events(
 
 
 @app.delete("/api/events/{machine_id}")
-async def delete_events(machine_id: str):
+async def delete_events(machine_id: str, request: Request):
+    # Admin-only: a public DELETE would let anyone wipe the dataset.
+    if not _authorized_admin(request):
+        raise HTTPException(status_code=403, detail="admin key required")
     async with AsyncSessionLocal() as db:
         try:
             machine = await db.execute(
@@ -222,11 +248,15 @@ async def delete_events(machine_id: str):
 
 @app.get("/api/events/{machine_id}")
 async def get_machine_events(
+    request: Request,
     machine_id: str,
     limit: int = 100,
     offset: int = 0,
     source: Optional[str] = None,
 ):
+    # Admin-only: a public GET would let anyone read every user's telemetry.
+    if not _authorized_admin(request):
+        raise HTTPException(status_code=403, detail="admin key required")
     async with AsyncSessionLocal() as db:
         try:
             query = (
@@ -262,7 +292,10 @@ async def get_machine_events(
 
 
 @app.get("/api/stats", response_model=StatsResponse)
-async def get_stats():
+async def get_stats(request: Request):
+    # Admin-only: reveals dataset totals.
+    if not _authorized_admin(request):
+        raise HTTPException(status_code=403, detail="admin key required")
     async with AsyncSessionLocal() as db:
         try:
             machines = await db.execute(select(func.count(Machine.id)))

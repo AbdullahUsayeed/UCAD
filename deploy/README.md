@@ -17,11 +17,22 @@ alongside the existing `redlightai.duckdns.org` site:
 - **Service:** `telemetry.service` → gunicorn/uvicorn on `127.0.0.1:7999`
 - **Proxy:** nginx `sites-available/telemetry` routes `/health` + `/api/*`
   from the bare IP (`52.77.213.181`) to `127.0.0.1:7999`
-- **Secrets:** `/etc/telemetry/env` (`DATABASE_URL`, `TELEMETRY_API_KEY`)
+- **Secrets:** `/etc/telemetry/env` (`DATABASE_URL`, `TELEMETRY_API_KEY`, `TELEMETRY_ADMIN_KEY`)
 
 Why SQLite: the instance has ~1 GB RAM; installing PostgreSQL risks OOM.
 `database.py`/`server.py` handle both dialects transparently. If you outgrow
 it, set `DATABASE_URL` to `postgresql+asyncpg://...` and reinstall `asyncpg`.
+
+## Auth model (two keys)
+
+| Key | Where it lives | Grants |
+|---|---|---|
+| `TELEMETRY_API_KEY` | shipped inside the addon (public, open source) | `POST /api/events` only |
+| `TELEMETRY_ADMIN_KEY` | `/etc/telemetry/env` on the server only — **never ship/commit it** | `GET`/`DELETE /api/events/{machine_id}`, `GET /api/stats` |
+
+The public ingest key **cannot** read or delete data: those endpoints return
+`403` unless the admin key is presented. If `TELEMETRY_ADMIN_KEY` is unset,
+read/delete/stats are disabled entirely.
 
 ## How the data is arranged (30 users, no setup needed)
 
@@ -60,7 +71,8 @@ The addon resolves the URL + key from (highest priority first):
 
 Every request must include the header `X-Api-Key: <key>` (already handled by
 `telemetry.py`). `/health` is public so clients can probe reachability; all
-other endpoints require the key.
+other endpoints require a valid key. The addon only ever sends the **ingest**
+key, so it can POST events but never read or delete data.
 
 ## Consent
 

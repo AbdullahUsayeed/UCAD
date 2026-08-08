@@ -58,9 +58,11 @@ sudo install -d -m 700 /etc/telemetry
 if [ ! -f "$ENV_FILE" ]; then
     DB_PASS="$("$APP_DIR/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(24))')"
     API_KEY="$("$APP_DIR/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    ADMIN_KEY="$("$APP_DIR/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(32))')"
     sudo bash -c "cat > $ENV_FILE" <<EOF
 DATABASE_URL=postgresql+asyncpg://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME
 TELEMETRY_API_KEY=$API_KEY
+TELEMETRY_ADMIN_KEY=$ADMIN_KEY
 HOST=127.0.0.1
 PORT=7999
 GUNICORN_WORKERS=2
@@ -113,12 +115,14 @@ echo " Deployment complete."
 echo "===================================================================="
 PUBLIC_IP="$(curl -s -4 https://ifconfig.me || echo '?')"
 echo " Health:  curl http://${PUBLIC_IP}/health"
-echo " API key: $(grep TELEMETRY_API_KEY "$ENV_FILE" | cut -d= -f2)"
+echo " Ingest key:  $(grep TELEMETRY_API_KEY "$ENV_FILE" | cut -d= -f2)"
+echo " Admin key:   $(grep TELEMETRY_ADMIN_KEY "$ENV_FILE" | cut -d= -f2)"
 echo
 echo " Client must send:"
 echo "   POST http://${PUBLIC_IP}/api/events"
-echo "   Header: X-Api-Key: <above key>"
+echo "   Header: X-Api-Key: <ingest key>"
 echo
+echo " Admin (read/delete/stats) requires TELEMETRY_ADMIN_KEY — NEVER ship it."
 echo " Useful commands:"
 echo "   sudo systemctl status telemetry          # service status"
 echo "   sudo journalctl -u telemetry -f          # live logs"
