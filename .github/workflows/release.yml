@@ -45,7 +45,9 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $ver = Select-Xml -Path package.xml -XPath "//version" | Select-Object -ExpandProperty Node | Select-Object -ExpandProperty InnerText
+          # package.xml uses a default xmlns, so Select-Xml //version returns
+          # nothing — extract with a namespace-agnostic regex instead.
+          $ver = [regex]::Match((Get-Content -Raw package.xml), '<version>([^<]+)</version>').Groups[1].Value
           echo "version=$ver" >> $env:GITHUB_OUTPUT
           echo "zip_name=UCAD-$ver.zip" >> $env:GITHUB_OUTPUT
 
