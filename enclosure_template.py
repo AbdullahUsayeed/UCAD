@@ -100,6 +100,7 @@ class Component:
     connector_type: str = "CUSTOM"   # key in CONNECTOR_TYPES
     wall: Optional[str] = None       # force wall: "N"/"S"/"E"/"W" or None=auto
     rotation: float = 0.0            # footprint rotation in degrees (0=East, 90=North, etc.)
+    secondary_connector_type: Optional[str] = None  # for combo jacks (e.g. USB + audio)
 
 
 @dataclass
@@ -205,6 +206,47 @@ class EnclosureConfig:
     enable_connectors: bool = True
     enable_pcb_ref:    bool = True
 
+    # ── Enclosure style ──────────────────────────────────────────────────────
+    corner_style:    str = "chamfered"   # "chamfered" | "rounded" | "sharp"
+    corner_radius:   float = 3.0         # used when corner_style == "rounded"
+
+    # ── Lid attachment strategy ──────────────────────────────────────────────
+    # "screw" (default bosses+inserts), "snap" (cantilever arms, see enable_snaps),
+    # "friction" (tight tongue-and-groove, no screws or snaps)
+    lid_attachment:        str = "screw"
+    # Optional per-wall override, e.g. {"N": "snap", "S": "screw"}; None = uniform
+    lid_attachment_walls:  Optional[Dict[str, str]] = None
+    friction_fit_clearance: float = 0.08   # tighter than lip_clearance, for press-fit lids
+
+    # ── PCB orientation ───────────────────────────────────────────────────────
+    pcb_orientation: str = "horizontal"   # "horizontal" (flat, default) | "vertical" (edge-mounted)
+
+    # ── Panel mount options ───────────────────────────────────────────────────
+    enable_flange_ears: bool = False
+    flange_ear_count:   int  = 2          # 2 (short sides) or 4 (all corners)
+    flange_ear_width:   float = 10.0
+    flange_ear_thickness: float = 3.0
+    flange_hole_d:      float = 4.0
+
+    enable_din_clip:    bool = False
+    din_rail_width:     float = 35.0      # standard 35mm DIN rail
+
+    # ── Thermal features ──────────────────────────────────────────────────────
+    enable_heatsink_cutout: bool = False
+    heatsink_cutout_locs:   List[Tuple[float, float, float, float]] = field(default_factory=list)  # (x,y,w,h) in PCB coords
+    enable_fan_vent:        bool = False
+    fan_vent_diameter:      float = 40.0
+    fan_vent_wall:          str = "S"
+    fan_vent_hole_d:        float = 3.0   # mounting screw holes for fan
+    thermal_pad_recess_depth: float = 0.0  # 0 = disabled
+
+    # ── Cable management ───────────────────────────────────────────────────────
+    enable_strain_relief: bool = False
+    strain_relief_locs:   List[dict] = field(default_factory=list)  # [{wall,x_mm,y_mm,width_mm}]
+    enable_routing_channel: bool = False
+    routing_channel_width: float = 4.0
+    routing_channel_depth: float = 2.0
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  PCB TO ENCLOSURE ADAPTER  — converts parsed KiCad dicts to dataclass objects
@@ -215,15 +257,56 @@ CONNECTOR_KEYWORDS = ["USB", "HDMI", "RJ45", "Audio", "Terminal", "Connector",
                        "PinHeader", "Socket", "Barrel_Jack", "DC",
                        "Button", "SW_", "Switch"]
 
+# Extended footprint → connector-type lookup. Keys are matched as substrings
+# against the *upper-cased, dash-normalized* footprint name. More specific
+# keys should be listed first since the first match wins.
+FOOTPRINT_CONNECTOR_MAP: List[Tuple[str, str]] = [
+    ("USB_C_RECEPTACLE",   "USB_C"),
+    ("USB_C",              "USB_C"),
+    ("TYPE_C",             "USB_C"),
+    ("USB_A",              "USB_A"),
+    ("USB_MINI",           "USB_MINI"),
+    ("MINI_USB",           "USB_MINI"),
+    ("MICRO_USB",          "MICRO_USB"),
+    ("USB_MICRO",          "MICRO_USB"),
+    ("MINI_HDMI",          "MINI_HDMI"),
+    ("HDMI",               "HDMI"),
+    ("BARREL_2.5",         "BARREL_2_5"),
+    ("BARREL_2_5",         "BARREL_2_5"),
+    ("BARREL_5.5",         "BARREL_5_5"),
+    ("BARREL_5_5",         "BARREL_5_5"),
+    ("BARRELJACK",         "BARREL_5_5"),
+    ("DC_JACK",            "BARREL_5_5"),
+    ("POWERJACK",          "BARREL_5_5"),
+    ("RJ45",               "RJ45"),
+    ("ETHERNET",           "RJ45"),
+    ("DB15",               "DB15"),
+    ("DSUB_15",            "DB15"),
+    ("DB9",                "DB9"),
+    ("DSUB_9",             "DB9"),
+    ("SMA",                "SMA"),
+]
+
+# Multi-role footprints (e.g. combo audio+USB jacks). Each entry maps a
+# footprint keyword to a (primary, secondary) connector-type pair, so the
+# generator can cut two overlapping/adjacent slots for one physical part.
+COMBO_CONNECTOR_MAP: Dict[str, Tuple[str, str]] = {
+    "AUDIO_USB_COMBO":  ("USB_C", "SMA"),
+    "USB_AUDIO_JACK":   ("USB_C", "SMA"),
+}
+
 
 def _detect_connector_type(name: str) -> str:
-    name_u = name.upper().replace("-", "_")
+    name_u = name.upper().replace("-", "_").replace(" ", "_")
+    for key, ctype in FOOTPRINT_CONNECTOR_MAP:
+        if key in name_u:
+            return ctype
     for key in CONNECTOR_TYPES:
         if key == "CUSTOM":
             continue
         if key in name_u:
             return key
-    # Broader checks
+    # Broader fallback checks
     if "USB" in name_u and "A" in name_u:
         return "USB_A"
     if "USB" in name_u and "C" in name_u:
@@ -243,9 +326,28 @@ def _detect_connector_type(name: str) -> str:
     return "CUSTOM"
 
 
+def _detect_combo_connector(name: str) -> Optional[Tuple[str, str]]:
+    """Return (primary, secondary) connector types for combo-jack footprints."""
+    name_u = name.upper().replace("-", "_").replace(" ", "_")
+    for key, pair in COMBO_CONNECTOR_MAP.items():
+        if key in name_u:
+            return pair
+    return None
+
+
 def _is_connector_footprint(name: str) -> bool:
     name_l = name.lower()
     return any(kw.lower() in name_l for kw in CONNECTOR_KEYWORDS)
+
+
+def _wall_from_rotation(rotation: float) -> str:
+    """Map a KiCad footprint rotation (degrees, 0=East/right edge facing out)
+    to the enclosure wall it should be cut into. Robust to any rotation by
+    snapping to the nearest cardinal direction rather than only exact 0/90/180/270."""
+    rot_norm = float(rotation) % 360
+    wall_map = {0: "E", 90: "N", 180: "W", 270: "S"}
+    nearest = round(rot_norm / 90) % 4 * 90
+    return wall_map.get(nearest, "E")
 
 
 def board_dict_to_boarddata(board_dict: dict):
@@ -267,15 +369,20 @@ def board_dict_to_boarddata(board_dict: dict):
         ref = c.get("ref", "?")
         is_conn = ref in edge_connector_refs or _is_connector_footprint(c.get("name", ""))
         conn_type = _detect_connector_type(c.get("name", "")) if is_conn else "CUSTOM"
+        combo = _detect_combo_connector(c.get("name", "")) if is_conn else None
+        if combo:
+            conn_type, secondary_type = combo
+        else:
+            secondary_type = None
+        rotation = float(c.get("rotation", 0))
         wall = None
         if is_conn:
             wall = c.get("face")  # explicit face from parser (nearest-edge, most reliable)
         if not wall and is_conn and "rotation" in c:
-            # Fallback: infer from rotation  (0°→E, 90°→N, 180°→W, 270°→S)
-            rot_norm = float(c["rotation"]) % 360
-            wall_map = {0: "E", 90: "N", 180: "W", 270: "S"}
-            wall = wall_map.get(round(rot_norm / 90) * 90)
-        rotation = float(c.get("rotation", 0))
+            # Fallback: infer from rotation, robust to any angle (not just 0/90/180/270).
+            # Only when the parser explicitly supplied a rotation — otherwise defer
+            # wall placement to make_connector_slot.
+            wall = _wall_from_rotation(rotation)
         comp = Component(
             ref=ref,
             x=c["x"] - x0, y=c["y"] - y0,
@@ -286,6 +393,7 @@ def board_dict_to_boarddata(board_dict: dict):
             connector_type=conn_type,
             wall=wall,
             rotation=rotation,
+            secondary_connector_type=secondary_type,
         )
         components.append(comp)
 
@@ -338,6 +446,18 @@ def params_to_enclosure_config(params: dict):
     if screw_size not in LID_SCREW_SIZES:
         screw_size = "M3"
 
+    corner_style = params.get("corner_style", "chamfered")
+    if corner_style not in ("chamfered", "rounded", "sharp"):
+        corner_style = "chamfered"
+
+    lid_attachment = params.get("lid_attachment", "screw")
+    if lid_attachment not in ("screw", "snap", "friction"):
+        lid_attachment = "screw"
+
+    pcb_orientation = params.get("pcb_orientation", "horizontal")
+    if pcb_orientation not in ("horizontal", "vertical"):
+        pcb_orientation = "horizontal"
+
     return EnclosureConfig(
         wall_thickness=_clamp(params.get("wall_thickness", params.get("wall_t", 3.0)), 0.5, 50.0, "wall_thickness"),
         floor_thickness=_clamp(params.get("floor_thickness", params.get("floor_t", 3.0)), 0.5, 25.0, "floor_thickness"),
@@ -356,7 +476,237 @@ def params_to_enclosure_config(params: dict):
         enable_label_recess=bool(params.get("enable_label_recess", True)),
         vent_slot_width=_clamp(params.get("vent_slot_width", 1.5), 0.5, 25.0, "vent_slot_width"),
         custom_cutouts=validated,
+        # ── richer template parameters ──────────────────────────────────────
+        corner_style=corner_style,
+        corner_radius=_clamp(params.get("corner_radius", 3.0), 0.5, 20.0, "corner_radius"),
+        lid_attachment=lid_attachment,
+        friction_fit_clearance=_clamp(params.get("friction_fit_clearance", 0.08), 0.02, 0.5, "friction_fit_clearance"),
+        pcb_orientation=pcb_orientation,
+        enable_flange_ears=bool(params.get("enable_flange_ears", False)),
+        flange_ear_count=int(params.get("flange_ear_count", 2)),
+        flange_ear_width=_clamp(params.get("flange_ear_width", 10.0), 3.0, 40.0, "flange_ear_width"),
+        flange_ear_thickness=_clamp(params.get("flange_ear_thickness", 3.0), 1.0, 10.0, "flange_ear_thickness"),
+        flange_hole_d=_clamp(params.get("flange_hole_d", 4.0), 1.5, 12.0, "flange_hole_d"),
+        enable_din_clip=bool(params.get("enable_din_clip", False)),
+        din_rail_width=_clamp(params.get("din_rail_width", 35.0), 15.0, 60.0, "din_rail_width"),
+        enable_heatsink_cutout=bool(params.get("enable_heatsink_cutout", False)),
+        heatsink_cutout_locs=[tuple(loc) for loc in params.get("heatsink_cutout_locs", [])],
+        enable_fan_vent=bool(params.get("enable_fan_vent", False)),
+        fan_vent_diameter=_clamp(params.get("fan_vent_diameter", 40.0), 15.0, 200.0, "fan_vent_diameter"),
+        fan_vent_wall=params.get("fan_vent_wall", "S"),
+        fan_vent_hole_d=_clamp(params.get("fan_vent_hole_d", 3.0), 1.5, 6.0, "fan_vent_hole_d"),
+        enable_strain_relief=bool(params.get("enable_strain_relief", False)),
+        strain_relief_locs=params.get("strain_relief_locs", []),
+        enable_routing_channel=bool(params.get("enable_routing_channel", False)),
+        routing_channel_width=_clamp(params.get("routing_channel_width", 4.0), 1.0, 15.0, "routing_channel_width"),
+        routing_channel_depth=_clamp(params.get("routing_channel_depth", 2.0), 0.5, 10.0, "routing_channel_depth"),
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  TEMPLATE VARIANTS  — same board data, different enclosure "families"
+#  Each returns an EnclosureConfig seeded with sensible defaults for that
+#  family; callers can still override individual fields afterwards.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def config_slimline(**overrides) -> EnclosureConfig:
+    """Tight margin, low profile, no vents — for battery-powered / pocket devices."""
+    base = dict(
+        wall_thickness=2.0, floor_thickness=2.0, lid_thickness=2.0,
+        margin=3.0, headroom=3.0, pcb_standoff_height=3.5,
+        enable_vents=False, enable_label_recess=False,
+        corner_style="rounded", corner_radius=2.0,
+        lid_attachment="snap",
+    )
+    base.update(overrides)
+    return params_to_enclosure_config(base)
+
+
+def config_vented(**overrides) -> EnclosureConfig:
+    """Aggressive ventilation, taller headroom — for boards that run warm
+    (SBCs, power supplies) without a fan."""
+    base = dict(
+        wall_thickness=3.0, floor_thickness=3.0, lid_thickness=3.0,
+        margin=8.0, headroom=18.0, pcb_standoff_height=6.0,
+        enable_vents=True, vent_slot_width=2.0, vent_slot_gap=1.5,
+        vent_wall="N",
+    )
+    base.update(overrides)
+    cfg = params_to_enclosure_config(base)
+    # A second vent bank on the opposite wall for real cross-flow.
+    # (Left as a manual follow-up: call cut_vents twice with vent_wall
+    # flipped between calls if true dual-wall venting is required.)
+    return cfg
+
+
+def config_rugged(**overrides) -> EnclosureConfig:
+    """Thick walls, reinforced bosses, tight lip groove for a gasket —
+    for field/industrial enclosures."""
+    base = dict(
+        wall_thickness=5.0, floor_thickness=5.0, lid_thickness=5.0,
+        margin=8.0, headroom=12.0, pcb_standoff_height=6.0,
+        boss_wall=3.0, standoff_wall=2.5,
+        lip_width=2.0, lip_depth=3.0, lip_clearance=0.1,
+        enable_vents=False, corner_style="sharp",
+        screw_size="M4",
+    )
+    base.update(overrides)
+    return params_to_enclosure_config(base)
+
+
+def config_panel_mount(**overrides) -> EnclosureConfig:
+    """Adds flange mounting ears for screwing to a panel/wall."""
+    base = dict(
+        wall_thickness=3.5, floor_thickness=3.0, lid_thickness=3.0,
+        margin=6.0, headroom=10.0,
+        enable_flange_ears=True, flange_ear_count=2,
+    )
+    base.update(overrides)
+    return params_to_enclosure_config(base)
+
+
+TEMPLATE_VARIANTS: dict = {
+    "slimline":     config_slimline,
+    "vented":       config_vented,
+    "rugged":       config_rugged,
+    "panel_mount":  config_panel_mount,
+}
+
+
+def build_variant(board_dict: dict, variant: str, params: dict = None):
+    """Build using a named template variant (slimline/vented/rugged/panel_mount),
+    with `params` applied as overrides on top of that variant's defaults."""
+    if variant not in TEMPLATE_VARIANTS:
+        return False, f"Unknown variant '{variant}'. Choose from {list(TEMPLATE_VARIANTS)}"
+    try:
+        board = board_dict_to_boarddata(board_dict)
+        cfg = TEMPLATE_VARIANTS[variant](**(params or {}))
+        build_enclosure(board, cfg)
+        return True, f"Enclosure ('{variant}' variant) generated successfully."
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return False, f"Enclosure build failed: {type(e).__name__}: {e}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  AI-DRIVEN REFINEMENT  (replaces the old regex-only "wall thickness = 3" parser)
+#
+#  This module deliberately does NOT call an LLM directly — it stays a pure
+#  function of (current_params, refinement_text, board_summary) -> new_params
+#  so it can be unit-tested and swapped between providers. The caller (e.g.
+#  the PCB chat widget) is responsible for the actual LLM round-trip: build
+#  the prompt with `build_refinement_prompt`, send it, then feed the JSON
+#  response through `apply_refinement_json`.
+# ──────────────────────────────────────────────────────────────────────────────
+
+REFINEMENT_SYSTEM_PROMPT = """You update parameters for a parametric PCB enclosure generator.
+You will be given:
+  1. The current enclosure parameters as JSON.
+  2. A short summary of the board (dimensions, mounting holes, components/connectors and their walls).
+  3. A natural-language refinement request from the user.
+
+Return ONLY a JSON object with the same keys as the current parameters, changed
+according to the request. Do not include keys you are not changing beyond what's
+needed to satisfy the request. Do not include any prose, explanation, or
+markdown fences — JSON only.
+
+Rules:
+  - Dimensions are in millimetres.
+  - Valid walls are N/S/E/W (or front/back/left/right for custom_cutouts).
+  - If the user asks to move a specific named connector/component to a
+    different wall, set that component's entry under "component_overrides"
+    as {"<ref>": {"wall": "<N|S|E|W>"}} — do not guess a wall for the wrong ref.
+  - If the user asks to add a cutout/hole not tied to an existing component,
+    add an entry to "custom_cutouts".
+  - If a request is ambiguous or not something this generator supports,
+    leave those fields unchanged rather than inventing a value.
+"""
+
+
+def build_refinement_prompt(current_params: dict, board_dict: dict, refinement_text: str) -> Tuple[str, str]:
+    """Build (system_prompt, user_prompt) for an LLM call that turns a
+    free-text refinement request into an updated params dict, given the
+    current params and the parsed board. The caller sends these to whichever
+    LLM client it uses and expects a JSON object back."""
+    dims = board_dict.get("dimensions", {})
+    comps = board_dict.get("components", [])
+    comp_lines = []
+    for c in comps:
+        role = "connector" if _is_connector_footprint(c.get("name", "")) else "component"
+        comp_lines.append(
+            f"  - {c.get('ref','?')} ({role}, {c.get('name','?')}) "
+            f"at ({c.get('x',0):.1f}, {c.get('y',0):.1f}) wall={c.get('face','?')}"
+        )
+    board_summary = (
+        f"Board: {dims.get('width', 0):.1f} x {dims.get('height', 0):.1f} mm, "
+        f"{len(board_dict.get('mounting_holes', []))} mounting holes\n"
+        + "\n".join(comp_lines)
+    )
+    user_prompt = (
+        f"CURRENT PARAMETERS (JSON):\n{current_params!r}\n\n"
+        f"BOARD SUMMARY:\n{board_summary}\n\n"
+        f"REFINEMENT REQUEST:\n{refinement_text}\n\n"
+        f"Return the updated parameters JSON now."
+    )
+    return REFINEMENT_SYSTEM_PROMPT, user_prompt
+
+
+def apply_refinement_json(current_params: dict, llm_response_json: dict) -> dict:
+    """Merge an LLM's returned JSON diff onto the current params dict.
+    Handles the special "component_overrides" key by stashing it separately
+    so the caller can apply per-component wall/position changes to the
+    parsed BoardData before re-running params_to_enclosure_config."""
+    merged = dict(current_params)
+    component_overrides = llm_response_json.pop("component_overrides", None)
+    for key, value in llm_response_json.items():
+        merged[key] = value
+    if component_overrides:
+        merged["_component_overrides"] = component_overrides
+    return merged
+
+
+def apply_component_overrides(board: BoardData, overrides: Dict[str, dict]) -> BoardData:
+    """Apply {"<ref>": {"wall": "N"}} style overrides onto a BoardData's
+    components in place (used after an AI refinement names a specific part)."""
+    if not overrides:
+        return board
+    by_ref = {c.ref: c for c in board.components}
+    for ref, changes in overrides.items():
+        comp = by_ref.get(ref)
+        if comp is None:
+            FreeCAD.Console.PrintWarning(f"  [refine] Component '{ref}' not found on board — override skipped\n")
+            continue
+        if "wall" in changes:
+            comp.wall = str(changes["wall"]).upper()
+        if "x_mm" in changes:
+            comp.x = float(changes["x_mm"])
+        if "y_mm" in changes:
+            comp.y = float(changes["y_mm"])
+    return board
+
+
+def refine_enclosure_from_text(board_dict: dict, current_params: dict, refinement_text: str,
+                                llm_json_response: dict):
+    """Full refinement round-trip glue. The caller has already sent
+    build_refinement_prompt(...) to the LLM and parsed its reply into
+    `llm_json_response` (a dict). This applies the diff and rebuilds.
+
+    Returns (success, message, new_params).
+    """
+    try:
+        new_params = apply_refinement_json(current_params, dict(llm_json_response))
+        board = board_dict_to_boarddata(board_dict)
+        overrides = new_params.pop("_component_overrides", None)
+        if overrides:
+            board = apply_component_overrides(board, overrides)
+        cfg = params_to_enclosure_config(new_params)
+        build_enclosure(board, cfg)
+        return True, "Enclosure refined and rebuilt.", new_params
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return False, f"Refinement failed: {type(e).__name__}: {e}", current_params
 
 
 def build_from_parsed(board_dict: dict, params: dict = None):
@@ -500,6 +850,26 @@ class Geo:
         return shape
 
     @staticmethod
+    def round_top(shape: Optional[Part.Shape], radius: float) -> Optional[Part.Shape]:
+        """Fillet the top-face perimeter edges of a shape (rounded corners)."""
+        if shape is None or radius <= 0:
+            return shape
+        try:
+            bb = shape.BoundBox
+            top_z = bb.ZMax
+            edges = [
+                e for e in shape.Edges
+                if (abs(e.Vertexes[0].Point.z - top_z) < 0.1 and
+                    abs(e.Vertexes[1].Point.z - top_z) < 0.1 and
+                    e.Length > radius * 2)
+            ]
+            if edges:
+                return shape.makeFillet(radius, edges)
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(f"  [geo] round_top failed: {e}\n")
+        return shape
+
+    @staticmethod
     def valid(shape: Optional[Part.Shape], label: str = "") -> bool:
         if shape is None or shape.isNull():
             FreeCAD.Console.PrintWarning(f"  [geo] Invalid shape: {label}\n")
@@ -578,12 +948,39 @@ class EnclosureGeometry:
                 "\n".join(f"    ⚠ {e}" for e in validation_errors) +
                 "\n  ─────────────────────\n"
             )
+        self._reconcile_lid_attachment()
         self._derive()
         self._overlap_standoffs: Set[int] = set()
         self._slot_adjustments: Dict[str, float] = {}   # comp.ref → mm to reduce slot width per side
         collision_ok = self._validate_collisions()
         self._resolve_collisions()
         self._print_summary()
+
+    # ── Lid attachment reconciliation ────────────────────────────────────────
+
+    def _reconcile_lid_attachment(self):
+        """Translate the high-level `lid_attachment` choice into the lower-level
+        flags the geometry/build code already understands, so 'screw' / 'snap' /
+        'friction' can be set once instead of juggling enable_snaps + lip
+        clearances by hand."""
+        cfg = self.cfg
+        mode = (cfg.lid_attachment or "screw").lower()
+        if mode == "snap":
+            cfg.enable_snaps = True
+            cfg.enable_lip = True
+        elif mode == "friction":
+            cfg.enable_snaps = False
+            cfg.enable_lip = True
+            cfg.lip_clearance = min(cfg.lip_clearance, cfg.friction_fit_clearance)
+            FreeCAD.Console.PrintMessage(
+                f"  [lid] friction-fit mode — lip clearance tightened to {cfg.lip_clearance:.3f}mm "
+                f"(no screws/snaps; expect a firm push-fit)\n"
+            )
+        elif mode == "screw":
+            # keep enable_snaps as explicitly configured (default False)
+            cfg.enable_lip = True
+        else:
+            FreeCAD.Console.PrintWarning(f"  [lid] Unknown lid_attachment '{mode}', defaulting to 'screw'\n")
 
     # ── Derived dimensions ────────────────────────────────────────────────────
 
@@ -1215,12 +1612,18 @@ class EnclosureGeometry:
 
     # ── Individual shape factories (for the named-object build pipeline) ──
 
-    def make_outer_box(self) -> Optional[Part.Shape]:
+    def _apply_corner_style(self, shape: Optional[Part.Shape]) -> Optional[Part.Shape]:
         cfg = self.cfg
+        if not cfg.enable_chamfer or cfg.corner_style == "sharp":
+            return shape
+        if cfg.corner_style == "rounded":
+            return Geo.round_top(shape, cfg.corner_radius)
+        # default: "chamfered"
+        return Geo.chamfer_top(shape, cfg.corner_chamfer)
+
+    def make_outer_box(self) -> Optional[Part.Shape]:
         outer = Geo.box(self.outer_x, self.outer_y, self.base_h)
-        if outer and cfg.enable_chamfer:
-            outer = Geo.chamfer_top(outer, cfg.corner_chamfer)
-        return outer
+        return self._apply_corner_style(outer)
 
     def make_cavity(self) -> Optional[Part.Shape]:
         cfg = self.cfg
@@ -1323,6 +1726,54 @@ class EnclosureGeometry:
                 return Geo.box(x2 - x1, wt + TOL, ph, x1, y0, z_bot)
         return None
 
+    def make_secondary_connector_slot(self, comp) -> Optional[Part.Shape]:
+        """For combo-jack footprints (e.g. USB+audio), cut a second slot
+        offset alongside the primary one on the same wall."""
+        if not comp.secondary_connector_type:
+            return None
+        cfg = self.cfg
+        cc = cfg.connector_clearance
+        zcc = cfg.connector_z_clearance
+        sec_type = comp.secondary_connector_type
+        if sec_type in CONNECTOR_TYPES and sec_type != "CUSTOM":
+            pw, ph = CONNECTOR_TYPES[sec_type]
+            pw += 2 * cc
+            ph += 2 * zcc
+        else:
+            pw = comp.width + 2 * cc
+            ph = comp.height + 2 * zcc
+
+        # Offset the secondary opening beside the primary by the primary's width
+        if comp.connector_type in CONNECTOR_TYPES and comp.connector_type != "CUSTOM":
+            primary_w = CONNECTOR_TYPES[comp.connector_type][0]
+        else:
+            primary_w = comp.width
+        offset = primary_w / 2 + pw / 2 + 1.0  # 1mm web between the two openings
+
+        wall = (comp.wall or "E").upper()
+        wt = cfg.wall_thickness
+        z_bot = max(cfg.floor_thickness + cfg.pcb_standoff_height + PCB_THICKNESS - ph / 2 - zcc, cfg.floor_thickness + 0.5)
+        cx = comp.x + self.pcb_ox
+        cy = comp.y + self.pcb_oy
+        sxl, sxh = self.safe_x
+        syl, syh = self.safe_y
+
+        if wall in ("E", "W"):
+            cy2 = cy + offset
+            y1 = max(cy2 - pw/2, syl)
+            y2 = min(cy2 + pw/2, syh)
+            x0 = self.outer_x - wt - TOL/2 if wall == "E" else -TOL/2
+            if y2 > y1:
+                return Geo.box(wt + TOL, y2 - y1, ph, x0, y1, z_bot)
+        else:
+            cx2 = cx + offset
+            x1 = max(cx2 - pw/2, sxl)
+            x2 = min(cx2 + pw/2, sxh)
+            y0 = self.outer_y - wt - TOL/2 if wall == "N" else -TOL/2
+            if x2 > x1:
+                return Geo.box(x2 - x1, wt + TOL, ph, x1, y0, z_bot)
+        return None
+
     def make_custom_cutout(self, cc: dict) -> Optional[Part.Shape]:
         """Generate a custom cutout shape on a specific wall.
         
@@ -1413,9 +1864,7 @@ class EnclosureGeometry:
         cfg = self.cfg
         lid_z = self.base_h - TOL
         shape = Geo.box(self.outer_x, self.outer_y, cfg.lid_thickness, 0, 0, lid_z)
-        if shape and cfg.enable_chamfer:
-            shape = Geo.chamfer_top(shape, cfg.corner_chamfer)
-        return shape
+        return self._apply_corner_style(shape)
 
     def make_lid_tongue(self) -> Optional[Part.Shape]:
         if not self.cfg.enable_lip:
@@ -1457,6 +1906,146 @@ class EnclosureGeometry:
         if not self.cfg.enable_pcb_ref:
             return None
         return Geo.box(self.b.width, self.b.height, PCB_THICKNESS, self.pcb_ox, self.pcb_oy, self.pcb_z)
+
+    # ── Panel mount: flange ears ─────────────────────────────────────────────
+
+    def make_flange_ears(self) -> Optional[Part.Shape]:
+        """Mounting-ear tabs on the short sides (or all 4 corners) with
+        through-holes, for screwing the enclosure to a panel."""
+        cfg = self.cfg
+        if not cfg.enable_flange_ears:
+            return None
+        ew = cfg.flange_ear_width
+        et = cfg.flange_ear_thickness
+        hd = cfg.flange_hole_d
+        z0 = 0.0
+
+        ears = None
+        # Ears project outward from the X-min/X-max walls, centred in Y
+        cy = self.outer_y / 2.0
+        positions = [(-ew, cy), (self.outer_x, cy)]
+        if cfg.flange_ear_count >= 4:
+            corner_off = ew  # small corner tabs instead
+            positions = [
+                (-ew, ew), (-ew, self.outer_y - 2*ew),
+                (self.outer_x, ew), (self.outer_x, self.outer_y - 2*ew),
+            ]
+        for ex, ey in positions:
+            tab = Geo.box(ew, ew * 1.5, et, ex, ey, z0)
+            if tab is None:
+                continue
+            hole_x = ex + ew / 2 if ex < 0 else ex + ew / 2
+            hole_y = ey + (ew * 1.5) / 2
+            hole = Geo.cyl(hd / 2, et + TOL, hole_x, hole_y, z0 - TOL/2)
+            tab = Geo.cut(tab, hole)
+            ears = Geo.fuse(ears, tab)
+        return ears
+
+    # ── Panel mount: DIN rail clip ───────────────────────────────────────────
+
+    def make_din_clip(self) -> Optional[Part.Shape]:
+        """A simple 35mm DIN-rail clip channel on the back (Y-min) wall.
+        Produces a clip body to fuse onto the shell exterior; the flexible
+        hook geometry is intentionally simple (straight snap lip) since DIN
+        clips are usually cut/printed separately and glued/screwed on in
+        practice — this gives a mounting boss to attach one, plus a shallow
+        rail-locating slot for a printed clip."""
+        cfg = self.cfg
+        if not cfg.enable_din_clip:
+            return None
+        rw = cfg.din_rail_width
+        clip_h = 6.0
+        clip_t = 2.0
+        cx = self.outer_x / 2 - rw / 2
+        cy = -clip_t - TOL
+        clip = Geo.box(rw, clip_t, clip_h, cx, cy, 0.0)
+        return clip
+
+    # ── Thermal: fan vent ─────────────────────────────────────────────────────
+
+    def make_fan_vent(self) -> Optional[Part.Shape]:
+        """Circular fan opening plus 4 corner mounting holes on the
+        configured wall (default south)."""
+        cfg = self.cfg
+        if not cfg.enable_fan_vent:
+            return None
+        wall = cfg.fan_vent_wall.upper()
+        wt = cfg.wall_thickness
+        d = cfg.fan_vent_diameter
+        r = d / 2.0
+        cx = self.outer_x / 2.0
+        cz = self.base_h / 2.0
+        hole_offset = d / 2.0 * 0.8  # standard fan hole spacing approx
+
+        shapes = []
+        if wall in ("N", "S"):
+            y0 = self.outer_y - wt - TOL/2 if wall == "N" else -TOL/2
+            # Cylinder axis points through the wall thickness (Y axis)
+            fan_hole = Part.makeCylinder(r, wt + TOL, FreeCAD.Vector(cx, y0, cz), FreeCAD.Vector(0, 1, 0))
+            shapes.append(fan_hole)
+            for dx, dz in [(-hole_offset, -hole_offset), (hole_offset, -hole_offset),
+                           (-hole_offset, hole_offset), (hole_offset, hole_offset)]:
+                mh = Part.makeCylinder(cfg.fan_vent_hole_d / 2, wt + TOL,
+                                        FreeCAD.Vector(cx + dx, y0, cz + dz), FreeCAD.Vector(0, 1, 0))
+                shapes.append(mh)
+        else:  # E / W
+            cy = self.outer_y / 2.0
+            x0 = self.outer_x - wt - TOL/2 if wall == "E" else -TOL/2
+            fan_hole = Part.makeCylinder(r, wt + TOL, FreeCAD.Vector(x0, cy, cz), FreeCAD.Vector(1, 0, 0))
+            shapes.append(fan_hole)
+            for dy, dz in [(-hole_offset, -hole_offset), (hole_offset, -hole_offset),
+                           (-hole_offset, hole_offset), (hole_offset, hole_offset)]:
+                mh = Part.makeCylinder(cfg.fan_vent_hole_d / 2, wt + TOL,
+                                        FreeCAD.Vector(x0, cy + dy, cz + dz), FreeCAD.Vector(1, 0, 0))
+                shapes.append(mh)
+
+        result = None
+        for s in shapes:
+            result = Geo.fuse(result, s)
+        return result
+
+    # ── Thermal: heatsink cutouts (over specific PCB components) ────────────
+
+    def make_heatsink_cutouts(self) -> Optional[Part.Shape]:
+        """Open rectangular windows in the lid above hot components, given
+        as (x_mm, y_mm, w_mm, h_mm) in PCB-local coordinates."""
+        cfg = self.cfg
+        if not cfg.enable_heatsink_cutout or not cfg.heatsink_cutout_locs:
+            return None
+        lid_z = self.base_h - TOL
+        result = None
+        for (x, y, w, h) in cfg.heatsink_cutout_locs:
+            cx = x + self.pcb_ox
+            cy = y + self.pcb_oy
+            cut = Geo.box(w, h, cfg.lid_thickness + TOL, cx - w/2, cy - h/2, lid_z - TOL)
+            result = Geo.fuse(result, cut)
+        return result
+
+    # ── Cable management: strain relief notches ─────────────────────────────
+
+    def make_strain_relief_cutouts(self) -> Optional[Part.Shape]:
+        """Small U-shaped notches cut into a wall's top edge, so a cable can
+        be pinned between shell and lid instead of routed through a hole."""
+        cfg = self.cfg
+        if not cfg.enable_strain_relief or not cfg.strain_relief_locs:
+            return None
+        wt = cfg.wall_thickness
+        result = None
+        for sr in cfg.strain_relief_locs:
+            wall = sr.get("wall", "front").lower()
+            x = float(sr.get("x_mm", 0))
+            w = float(sr.get("width_mm", 4))
+            depth = wt + 1.0
+            top_z = self.base_h - TOL
+            if wall in ("front", "back"):
+                y0 = -TOL if wall == "front" else self.outer_y - wt - TOL
+                notch = Geo.box(w, wt + TOL + 1.0, depth, x - w/2, y0, top_z - depth + TOL)
+            else:
+                y0 = x  # reuse x_mm as the position along that wall
+                x0 = -TOL if wall == "left" else self.outer_x - wt - TOL
+                notch = Geo.box(wt + TOL + 1.0, w, depth, x0, y0 - w/2, top_z - depth + TOL)
+            result = Geo.fuse(result, notch)
+        return result
 
     def make_component_block(self, comp) -> Optional[Part.Shape]:
         cz = self.pcb_z + PCB_THICKNESS
@@ -1605,6 +2194,16 @@ class DocumentBuilder:
             if snap:
                 shell_positives.append(snap)
                 FreeCAD.Console.PrintMessage("  + Snap-fit arms added to shell\n")
+        if config.enable_flange_ears:
+            ears = geo.make_flange_ears()
+            if ears:
+                shell_positives.append(ears)
+                FreeCAD.Console.PrintMessage("  + Flange mounting ears added\n")
+        if config.enable_din_clip:
+            clip = geo.make_din_clip()
+            if clip:
+                shell_positives.append(clip)
+                FreeCAD.Console.PrintMessage("  + DIN rail clip boss added\n")
 
         shell_negatives: List[Optional[Part.Shape]] = [
             geo.make_cavity(),
@@ -1622,9 +2221,24 @@ class DocumentBuilder:
             for comp in board.components:
                 if comp.connector:
                     shell_negatives.append(geo.make_connector_slot(comp))
+                    if comp.secondary_connector_type:
+                        shell_negatives.append(geo.make_secondary_connector_slot(comp))
+                        FreeCAD.Console.PrintMessage(
+                            f"    Combo jack {comp.ref}: secondary slot ({comp.secondary_connector_type}) added\n"
+                        )
         for cc in config.custom_cutouts:
             if cc.get("wall", "").lower() != "top":
                 shell_negatives.append(geo.make_custom_cutout(cc))
+        if config.enable_fan_vent:
+            fan = geo.make_fan_vent()
+            if fan:
+                shell_negatives.append(fan)
+                FreeCAD.Console.PrintMessage(f"  + Fan vent ({config.fan_vent_diameter:.0f}mm) cut on wall {config.fan_vent_wall}\n")
+        if config.enable_strain_relief:
+            relief = geo.make_strain_relief_cutouts()
+            if relief:
+                shell_negatives.append(relief)
+                FreeCAD.Console.PrintMessage(f"  + {len(config.strain_relief_locs)} strain-relief notch(es) added\n")
 
         n_pos = sum(1 for p in shell_positives if p is not None)
         n_neg = sum(1 for n in shell_negatives if n is not None)
@@ -1664,6 +2278,11 @@ class DocumentBuilder:
         for cc in config.custom_cutouts:
             if cc.get("wall", "").lower() == "top":
                 lid_negatives.append(geo.make_custom_cutout(cc))
+        if config.enable_heatsink_cutout:
+            hs = geo.make_heatsink_cutouts()
+            if hs:
+                lid_negatives.append(hs)
+                FreeCAD.Console.PrintMessage(f"  + {len(config.heatsink_cutout_locs)} heatsink window(s) cut in lid\n")
 
         ln_pos = sum(1 for p in lid_positives if p is not None)
         ln_neg = sum(1 for n in lid_negatives if n is not None)

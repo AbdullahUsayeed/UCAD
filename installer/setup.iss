@@ -44,9 +44,9 @@ Name: "freecad_download"; Description: "Download FreeCAD (if not installed)"; Ty
 [Files]
 ; Launcher
 Source: "..\dist\UCAD Launcher\*"; DestDir: "{app}\Launcher"; Flags: recursesubdirs createallsubdirs; Components: launcher
-; Plugin (Mod) — will be referenced by -M flag, not copied into FreeCAD
-; Uses pre-obfuscated source (run scripts\protect_source.py first)
-Source: "..\build\protected_mod\*"; DestDir: "{app}\Runtime\AICompanion"; Flags: recursesubdirs createallsubdirs; Components: plugin
+; Plugin (Mod) — referenced by -M flag, not copied into FreeCAD
+; Ships plain open-source source (LGPL). If a staged mod exists at build\mod_stage, use it.
+Source: "..\build\mod_stage\*"; DestDir: "{app}\Runtime\AICompanion"; Flags: recursesubdirs createallsubdirs; Components: plugin
 ; Config defaults
 Source: "..\installer\default_config.json"; DestDir: "{app}\Config"; Flags: onlyifdoesntexist
 
@@ -64,20 +64,14 @@ Filename: "{app}\Launcher\{#MyAppExeName}"; Description: "Launch UCAD Assistant"
 
 [UninstallRun]
 ; Clean up user data (optional, asked during uninstall)
-Filename: "{cmd}"; Parameters: "/c rmdir /s /q ""{app}\RuntimeData"" 2>nul"; Flags: runhidden
-Filename: "{cmd}"; Parameters: "/c rmdir /s /q ""{app}\Logs"" 2>nul"; Flags: runhidden
+Filename: "{cmd}"; Parameters: "/c rmdir /s /q ""{app}\RuntimeData"" 2>nul"; Flags: runhidden; RunOnceId: CleanRuntimeData
+Filename: "{cmd}"; Parameters: "/c rmdir /s /q ""{app}\Logs"" 2>nul"; Flags: runhidden; RunOnceId: CleanLogs
 
 [Code]
 // ── FreeCAD Detection ──────────────────────────────────────
 var
-  FreeCADNeedsDownload: Boolean;
+  FreeCADPage: TInputOptionWizardPage;
   DownloadPage: TDownloadWizardPage;
-  FreeCADPath: string;
-
-#define FreeCADMinVer         "1.1.0"
-#define FreeCADDownloadVer    "1.1.1"
-#define FreeCADDownloadFile   "FreeCAD_1.1.1-Windows-x86_64-py311.7z"
-#define FreeCADDownloadUrl    "https://github.com/FreeCAD/FreeCAD/releases/download/1.1.1/FreeCAD_1.1.1-Windows-x86_64-py311.7z"
 
 function FindFreeCADInRegistry: string;
 var
@@ -125,74 +119,55 @@ begin
     Result := FindFreeCADInLocalAppData;
 end;
 
-// ── Version checking ───────────────────────────────────────
+// ── Download progress ──────────────────────────────────────
 
-function CompareVersion(v1, v2: string): Integer;
-var
-  p1, p2: Integer;
-  n1, n2: Integer;
-  rem1, rem2: string;
+procedure CurDownloadProgress(const Url, FileName: string; const Progress, ProgressMax: Int64);
 begin
-  Result := 0;
-  p1 := Pos('.', v1);
-  p2 := Pos('.', v2);
-  if p1 > 0 then n1 := StrToInt(Copy(v1, 1, p1 - 1)) else n1 := StrToInt(v1);
-  if p2 > 0 then n2 := StrToInt(Copy(v2, 1, p2 - 1)) else n2 := StrToInt(v2);
-  if n1 < n2 then Result := -1
-  else if n1 > n2 then Result := 1
-  else if (p1 > 0) and (p2 > 0) then
-    Result := CompareVersion(Copy(v1, p1 + 1, Length(v1)), Copy(v2, p2 + 1, Length(v2)))
-  else if p1 > 0 then Result := 1
-  else if p2 > 0 then Result := -1;
+  DownloadPage.SetProgress(Progress, ProgressMax);
 end;
 
-function IsFreeCADVersionRecent(fcExe: string): Boolean;
-var
-  verStr: string;
-  major, minor, build: Cardinal;
-begin
-  Result := False;
-  if GetVersionNumbers(fcExe, major, minor, build) then
-  begin
-    verStr := Format('%d.%d.%d', [major, minor, build]);
-    Result := CompareVersion(verStr, '{#FreeCADMinVer}') >= 0;
-  end;
-end;
-
-// ── Wizard init ────────────────────────────────────────────
+// ── Wizard Page: FreeCAD Detection ─────────────────────────
 
 procedure InitializeWizard;
 var
   fcExe: string;
 begin
-  FreeCADNeedsDownload := False;
-  fcExe := FindFreeCAD;
+  // In silent mode, skip FreeCAD detection UI entirely
+  if not WizardSilent then
+  begin
+    fcExe := FindFreeCAD;
+    if fcExe = '' then
+    begin
+      // FreeCAD not found — offer to download
+      FreeCADPage := CreateInputOptionPage(
+        wpSelectComponents,
+        'FreeCAD Detection',
+        'FreeCAD was not found on your system.',
+        'UCAD Assistant requires FreeCAD 1.0 or later.'#13#10 +
+        'You can download it automatically during installation.',
+        True, False
+      );
+      FreeCADPage.Add('Download FreeCAD 1.1.1 (~400 MB) — RECOMMENDED');
+      FreeCADPage.Add('I will install FreeCAD manually');
+      FreeCADPage.SelectedValueIndex := 0;
+    end;
+  end;
 
-  if fcExe = '' then
-    FreeCADNeedsDownload := True
-  else if not IsFreeCADVersionRecent(fcExe) then
-    FreeCADNeedsDownload := True;
-
-  DownloadPage := CreateDownloadPage('Downloading FreeCAD', 'Please wait while FreeCAD is downloaded...', @OnDownloadProgress);
-end;
-
-procedure OnDownloadProgress(const Url, FileName: string; const Progress, ProgressMax: Int64);
-var
-  Percent: Integer;
-begin
-  if ProgressMax > 0 then
-    Percent := Round(Progress / ProgressMax * 100)
-  else
-    Percent := 0;
-  DownloadPage.SetProgress(Percent);
+  // Download page
+  DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), nil);
+  DownloadPage.ShowBaseNameInsteadOfUrl := True;
 end;
 
 // ── FreeCAD download ───────────────────────────────────────
 
 function DownloadFreeCAD: Boolean;
+var
+  Url: string;
 begin
+  Url := 'https://github.com/FreeCAD/FreeCAD/releases/download/1.1.1/FreeCAD_1.1.1-Windows-x86_64-py311.7z';
+
   DownloadPage.Clear;
-  DownloadPage.Add('{#FreeCADDownloadUrl}', '{#FreeCADDownloadFile}', '');
+  DownloadPage.Add(Url, 'FreeCAD_1.1.1-Windows-x86_64-py311.7z', '');
   DownloadPage.Show;
 
   try
@@ -212,17 +187,26 @@ var
   SevenZipPath: string;
   ArchivePath: string;
   ExtractDir: string;
+  NestedDir: string;
   ResultCode: Integer;
 begin
   Result := False;
-  ArchivePath := ExpandConstant('{tmp}\{#FreeCADDownloadFile}');
+  ArchivePath := ExpandConstant('{tmp}\FreeCAD_1.1.1-Windows-x86_64-py311.7z');
   ExtractDir := ExpandConstant('{app}\Runtime\FreeCAD');
+  CreateDir(ExtractDir);
 
+  // Find 7-Zip: check common locations + PATH
   SevenZipPath := '7z.exe';
   if not FileExists(SevenZipPath) then
     SevenZipPath := ExpandConstant('{sys}\7z.exe');
   if not FileExists(SevenZipPath) then
     SevenZipPath := ExpandConstant('{pf}\7-Zip\7z.exe');
+  if not FileExists(SevenZipPath) then
+    SevenZipPath := 'C:\Program Files\7-Zip\7z.exe';
+  if not FileExists(SevenZipPath) then
+    SevenZipPath := 'C:\Program Files (x86)\7-Zip\7z.exe';
+  if not FileExists(SevenZipPath) then
+    SevenZipPath := ExpandConstant('{localappdata}\Programs\7-Zip\7z.exe');
 
   if FileExists(SevenZipPath) then
   begin
@@ -230,19 +214,28 @@ begin
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
     begin
       Result := True;
+    end
+    else
+    begin
+      SuppressibleMsgBox(
+        'Failed to extract FreeCAD archive.'#13#10 +
+        Format('7-Zip exit code: %d', [ResultCode]) + #13#10 + #13#10 +
+        'You can extract it manually from:'#13#10 + ArchivePath,
+        mbError, MB_OK, IDOK);
     end;
   end
   else
   begin
-    if Exec(ExpandConstant('{cmd}'), Format('/c powershell -Command "Expand-Archive -Path ''{0}'' -DestinationPath ''{1}'' -Force"', [ArchivePath, ExtractDir]),
-      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    begin
-      Result := True;
-    end;
+    // 7-Zip not installed — leave archive in place for manual extraction
+    SuppressibleMsgBox(
+      '7-Zip not found. FreeCAD archive was downloaded but could not be extracted.'#13#10#13#10 +
+      'Install 7-Zip (https://7-zip.org) and extract manually:'#13#10 +
+      ArchivePath,
+      mbInformation, MB_OK, IDOK);
   end;
 
-  var NestedDir := ExtractDir + '\{#FreeCADDownloadFile}';
-  StringChangeEx(NestedDir, '.7z', '', True);
+  // Handle nested directory in .7z
+  NestedDir := ExtractDir + '\FreeCAD_1.1.1_Windows-x86_64-py311';
   if DirExists(NestedDir) then
   begin
     Exec(ExpandConstant('{cmd}'), Format('/c move /y "{0}\*" "{1}"', [NestedDir, ExtractDir]),
@@ -256,12 +249,30 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  if FreeCADNeedsDownload then
+  Result := '';
+
+  if FindFreeCAD = '' then
   begin
-    if not DownloadFreeCAD then
-      Result := 'Failed to download FreeCAD. Please check your internet connection.';
+    // In silent mode, skip FreeCAD download — launcher handles it on first launch
+    if WizardSilent then
+    begin
+      Log('Silent mode: FreeCAD not found. Skipping download (launcher will prompt user).');
+    end
+    else if FreeCADPage.SelectedValueIndex = 0 then
+    begin
+      if not DownloadFreeCAD then
+      begin
+        // Non-fatal: warn but let install continue
+        SuppressibleMsgBox(
+          'Failed to download FreeCAD. Please check your internet connection.'#13#10#13#10 +
+          'You can download it manually from https://www.freecad.org/download'#13#10 +
+          'and configure FreeCAD path in UCAD Launcher settings after installation.',
+          mbInformation, MB_OK, IDOK);
+      end;
+    end;
   end;
 
+  // Ensure runtime directory exists for the Mod path
   if not DirExists(ExpandConstant('{app}\Runtime\AICompanion')) then
     CreateDir(ExpandConstant('{app}\Runtime\AICompanion'));
 end;
@@ -272,7 +283,8 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    if FileExists(ExpandConstant('{tmp}\{#FreeCADDownloadFile}')) then
+    // If FreeCAD was downloaded, extract it
+    if FileExists(ExpandConstant('{tmp}\FreeCAD_1.1.1-Windows-x86_64-py311.7z')) then
     begin
       ExtractFreeCAD;
     end;

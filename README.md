@@ -101,9 +101,16 @@ Install dependencies:
 
 ## License
 
-Proprietary. Requires a valid license key.
+Open source (LGPL-2.0-or-later). Free for all use.
 
-[Get UCAD →](https://ai-companion-licensing.usayeed10.workers.dev/checkout?plan=yearly)
+## Privacy
+
+UCAD Assistant may collect anonymous usage statistics (CAD commands and
+AI-generated scripts) to train better models. This is **opt-in** — you'll see
+a one-time consent dialog on first launch, and you can toggle it anytime in
+Settings. No document data or personal information is collected. You can also
+disable collection entirely by setting the environment variable
+`AICOMPANION_TELEMETRY_URL=` before launching FreeCAD.
 
 ---
 

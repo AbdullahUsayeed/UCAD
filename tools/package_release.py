@@ -35,7 +35,11 @@ def get_version() -> str:
         return "0.0.0"
     tree = ET.parse(pkg_xml)
     root = tree.getroot()
-    ver = root.findtext("version", "0.0.0")
+    # package.xml has a default namespace — resolve it so findtext works.
+    ns = ""
+    if root.tag.startswith("{"):
+        ns = "{" + root.tag.split("}")[0].strip("{") + "}"
+    ver = root.findtext(f"{ns}version", "0.0.0")
     return ver.strip()
 
 
@@ -72,17 +76,26 @@ def copy_plain_source(out_dir: Path):
     }
     exclude_extensions = {".pyc", ".cover", ".tmp", ".zip"}
 
-    for item in SOURCE.rglob("*"):
-        rel = item.relative_to(SOURCE)
-        parts = rel.parts
-        if any(p in exclude_patterns for p in parts):
-            continue
-        if item.suffix in exclude_extensions:
-            continue
-        dst = out_dir / rel
-        if item.is_dir():
-            dst.mkdir(parents=True, exist_ok=True)
-        else:
+    def excluded_dir(name: str) -> bool:
+        return name in exclude_patterns
+
+    for dirpath, dirnames, filenames in os.walk(SOURCE):
+        dirpath_p = Path(dirpath)
+        rel_dir = dirpath_p.relative_to(SOURCE)
+        # Prune excluded directories so we never traverse huge trees
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in exclude_patterns and (dirpath_p / d).name not in exclude_patterns
+        ]
+        for fname in filenames:
+            item = dirpath_p / fname
+            rel = item.relative_to(SOURCE)
+            parts = rel.parts
+            if any(p in exclude_patterns for p in parts):
+                continue
+            if item.suffix in exclude_extensions:
+                continue
+            dst = out_dir / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, dst)
 

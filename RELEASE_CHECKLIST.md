@@ -9,18 +9,19 @@
 - [ ] Run full test suite: `python -m pytest tests/ -v`
 - [ ] Test Mod in FreeCAD (manual launch via Addon Manager)
 
-## Build Launcher
+## Build Package (GitHub Actions)
 
-- [ ] Install PyInstaller: `pip install pyinstaller`
-- [ ] Build: `python launcher/build_launcher.py`
-- [ ] Verify: `dist/UCAD Launcher/UCAD Launcher.exe` exists
-- [ ] Test launcher: `dist/UCAD Launcher/UCAD Launcher.exe`
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which:
+- Runs the full test suite
+- Vendors deps with `python tools/update_deps.py`
+- Builds `UCAD-{version}.zip` (plain open-source source)
+- Creates a draft GitHub Release
 
-## Build Installer
+## Build Installer (Windows, optional)
 
 - [ ] Install Inno Setup 6+ from https://jrsoftware.org/isdl.php
 - [ ] Build: `installer\build_installer.bat`
-- [ ] Verify: `dist/UCAD_Assistant_<version>_Setup.exe` exists
+- [ ] Verify: `dist\UCAD_Assistant_<version>_Setup.exe` exists
 
 ## Test Installer
 
@@ -37,13 +38,16 @@
 ## Release
 
 - [ ] Tag release in git: `git tag v<version> && git push --tags`
-- [ ] Create GitHub Release with:
-  - [ ] `UCAD_Assistant_<version>_Setup.exe` (installer)
-  - [ ] Source code archive
-  - [ ] Release notes
+- [ ] Publish the draft GitHub Release created by CI
+- [ ] Attach `UCAD_Assistant_<version>_Setup.exe` if the installer was built
 
 ## Post-Release
 
 - [ ] Update README with new version
 - [ ] Submit to FreeCAD Addon Manager (if applicable)
 - [ ] Announce on FreeCAD forum
+
+## Notes
+
+- Project is **LGPL-2.0-or-later open source** — no source obfuscation.
+- The installer ships plain source staged via `python tools/stage_mod.py`.

@@ -13,3 +13,14 @@ server/.wrangler/
 pyarmor.bug.log
 secret_store.py,cover
 test_obf/
+
+# Runtime / test artifacts
+*.db
+*.db-shm
+*.db-wal
+install_log.txt
+install_test.log
+.release_staging/
+AICompanion_Release/
+build/mod_stage/
+UCAD-*.zip

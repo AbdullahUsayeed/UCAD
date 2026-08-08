@@ -27,20 +27,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: |
+          python -m pytest tests/ -q
 
       - name: Vendor dependencies into .python-deps/
         run: |
           python tools/update_deps.py
 
-      - name: Install PyArmor
+      - name: Build release package
         run: |
-          pip install pyarmor
-          pyarmor --version
-
-      - name: Build obfuscated release package
-        run: |
-          python tools/package_release.py
+          python tools/package_release.py --skip-obfuscate
 
       - name: Get version from package.xml
         id: version
