@@ -3,8 +3,8 @@
   <name>UCAD Assistant</name>
   <description>AI CAD agent for FreeCAD — build, edit, and automate parametric design through natural language chat. Supports PCB enclosure generation, DXF processing, gear design, and multi-step autonomous plan execution with transaction rollback.</description>
   <icon>Resources/icons/ai_companion.svg</icon>
-  <version>1.0.2</version>
-  <date>2026-07-09</date>
+  <version>1.1.0</version>
+  <date>2026-08-08</date>
   <maintainer email="usayeed@example.com">Usayeed</maintainer>
   <license>LGPL-2.0-or-later</license>
   <url type="repository" branch="master">https://github.com/AbdullahUsayeed/UCAD</url>

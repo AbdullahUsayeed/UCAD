@@ -16,7 +16,7 @@ class ComponentVersion:
 # Bump these independently when making changes.
 
 LAUNCHER_VERSION  = ComponentVersion("launcher",  "1.0.0")
-PLUGIN_VERSION    = ComponentVersion("plugin",    "1.0.2")
+PLUGIN_VERSION    = ComponentVersion("plugin",    "1.1.0")
 RUNTIME_VERSION   = ComponentVersion("runtime",   "1.0.0")
 
 

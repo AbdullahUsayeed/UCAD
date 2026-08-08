@@ -2,7 +2,7 @@
 ; Build: iscc setup.iss
 
 #define MyAppName "UCAD Assistant"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "USAYEED LLC"
 #define MyAppURL "https://github.com/AbdullahUsayeed/UCAD"
 #define MyAppExeName "UCAD Launcher.exe"
