@@ -80,6 +80,8 @@ def build_cli():
             "launcher.runtime_manager",
             "launcher.version",
             "launcher.diagnostics",
+            # lazily imported inside runtime_manager.download_freecad()
+            "py7zr",
         ],
         console=True,
         icon=icon,
@@ -100,6 +102,8 @@ def build_gui():
             "launcher.runtime_manager",
             "launcher.version",
             "launcher.diagnostics",
+            # lazily imported inside runtime_manager.download_freecad()
+            "py7zr",
         ],
         console=False,
         icon=icon,

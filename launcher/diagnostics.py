@@ -17,6 +17,7 @@ from typing import Optional
 
 from .paths import BASE, CONFIG_FILE, SECRETS_FILE, MOD, FREECAD
 from .config_manager import load_config, load_secrets
+from .version import PLUGIN_VERSION
 
 
 @dataclass
@@ -32,12 +33,12 @@ class DiagnosticsReport:
     checks: list[CheckResult] = field(default_factory=list)
     timestamp: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
     os_info: str = field(default_factory=lambda: f"{platform.system()} {platform.release()} ({platform.version()})")
-    ucad_version: str = "1.0.1"
+    ucad_version: str = field(default_factory=lambda: PLUGIN_VERSION.version)
     python_version: str = sys.version
 
     @property
     def all_pass(self) -> bool:
-        return all(c.status for c in checks)
+        return all(c.status for c in self.checks)
 
     def to_text(self) -> str:
         lines = [
@@ -53,8 +54,8 @@ class DiagnosticsReport:
             f"{'-'*40}",
         ]
         for c in self.checks:
-            icon = "✓" if c.status else "✗"
-            lines.append(f"  {icon} {c.name} ({c.duration_ms:.0f}ms)")
+            icon = "OK" if c.status else "FAIL"
+            lines.append(f"  [{icon}] {c.name} ({c.duration_ms:.0f}ms)")
             if c.detail:
                 lines.append(f"     {c.detail}")
         lines.append(f"{'='*40}")

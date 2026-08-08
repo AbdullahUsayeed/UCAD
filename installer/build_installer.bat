@@ -64,6 +64,12 @@ if not exist %ISCC% (
     set ISCC="C:\Program Files\Inno Setup 6\ISCC.exe"
 )
 if not exist %ISCC% (
+    set ISCC="C:\Program Files (x86)\Inno Setup 7\ISCC.exe"
+)
+if not exist %ISCC% (
+    set ISCC="C:\Program Files\Inno Setup 7\ISCC.exe"
+)
+if not exist %ISCC% (
     echo WARNING: Inno Setup compiler not found at %ISCC%
     echo Install from https://jrsoftware.org/isdl.php
     echo.

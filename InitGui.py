@@ -132,8 +132,9 @@ except Exception as e:
     FreeCAD.Console.PrintError(f"AICompanion: failed to register command: {e}\n")
 
 class AICompanionWorkbench(FreeCADGui.Workbench):
+    WorkbenchId = "UCADAssistant"
     MenuText = "UCAD Assistant"
-    ToolTip = "Usayeed AI CAD Agent v1.0.0"
+    ToolTip = "Usayeed AI CAD Agent v1.1.0"
     
     def Initialize(self):
         import traceback
