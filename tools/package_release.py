@@ -46,11 +46,19 @@ def copy_plain_source(out_dir: Path):
     print("Copying plain open-source source (LGPL-2.1-or-later).")
 
     exclude_patterns = {
+        # build/install/dev artifacts never ship with the addon
         "__pycache__", ".git", ".github", ".pytest_cache",
         ".coverage", ".gitignore",
         "config.json", "test_obf", ".release_staging",
+        "build", "dist", "tests", "examples", "launcher", "installer",
+        "tools", "deploy", "server", "worker", "scripts", "Resources",
         ".python-deps",
         "install.bat", "install.sh",
+    }
+    # server-side / infra files that belong in the repo, not the addon package
+    exclude_files = {
+        "server.py", "database.py", "Dockerfile", "docker-compose.yml",
+        "pytest.ini", "requirements-dev.txt",
     }
     exclude_extensions = {".pyc", ".cover", ".tmp", ".zip"}
 
@@ -67,6 +75,8 @@ def copy_plain_source(out_dir: Path):
             parts = rel.parts
             if any(p in exclude_patterns for p in parts):
                 continue
+            if item.name in exclude_files:
+                continue
             if item.suffix in exclude_extensions:
                 continue
             dst = out_dir / rel
@@ -77,8 +87,20 @@ def copy_plain_source(out_dir: Path):
     if deps_src.exists():
         deps_dst = out_dir / ".python-deps"
         deps_dst.mkdir(parents=True, exist_ok=True)
+        # Strip caches, compiled artifacts, tests, and package metadata so the
+        # vendored deps are runtime-only and as small as possible.
         for item in deps_src.rglob("*"):
             rel = item.relative_to(deps_src)
+            parts = rel.parts
+            if any(
+                p in ("__pycache__", "tests", "test", "testing")
+                or p.endswith(".dist-info")
+                or p.endswith(".egg-info")
+                for p in parts
+            ):
+                continue
+            if item.suffix in (".pyc", ".pyo", ".pyi", ".egg-info", ".tmp"):
+                continue
             dst = deps_dst / rel
             if item.is_dir():
                 dst.mkdir(parents=True, exist_ok=True)
