@@ -72,7 +72,19 @@ class Event(Base):
     )
 
 
-engine = create_async_engine(DATABASE_URL, echo=False, pool_size=20, max_overflow=10)
+# Small pool: this is a lightweight telemetry receiver. SQLite is single-writer,
+# so a large pool just holds idle connections in memory. Postgres gets a modest
+# pool; SQLite gets a tiny one.
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_async_engine(
+        DATABASE_URL, echo=False,
+        pool_size=5, max_overflow=2, pool_pre_ping=False,
+    )
+else:
+    engine = create_async_engine(
+        DATABASE_URL, echo=False,
+        pool_size=5, max_overflow=2,
+    )
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

@@ -29,6 +29,10 @@ ReadWritePaths=/opt/telemetry
 ProtectHome=true
 # Create new files (SQLite db) with owner-only permissions
 UMask=0077
+# Memory bound: this is a lightweight telemetry receiver. Cap so it can never
+# balloon on the shared box. Peak at boot is ~90MB; 150MB is generous headroom.
+MemoryHigh=100M
+MemoryMax=150M
 
 [Install]
 WantedBy=multi-user.target
