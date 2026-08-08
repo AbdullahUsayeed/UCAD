@@ -15,8 +15,9 @@ alongside the existing `redlightai.duckdns.org` site:
 - **App:** `/opt/telemetry/` (venv + `server.py` + `database.py`)
 - **DB:** SQLite at `/opt/telemetry/telemetry.db` (small box — no Postgres needed)
 - **Service:** `telemetry.service` → gunicorn/uvicorn on `127.0.0.1:7999`
-- **Proxy:** nginx `sites-available/telemetry` routes `/health` + `/api/*`
-  from the bare IP (`52.77.213.181`) to `127.0.0.1:7999`
+- **Proxy:** nginx `sites-available/telemetry-https` serves
+  `https://ucadtelemetry.duckdns.org` (Let's Encrypt TLS) → `127.0.0.1:7999`.
+  HTTP on port 80 redirects (301) to HTTPS. `/docs`/`/redoc` are not exposed.
 - **Secrets:** `/etc/telemetry/env` (`DATABASE_URL`, `TELEMETRY_API_KEY`, `TELEMETRY_ADMIN_KEY`)
 
 Why SQLite: the instance has ~1 GB RAM; installing PostgreSQL risks OOM.
@@ -66,8 +67,8 @@ ssh -i mykeyaws.pem ubuntu@52.77.213.181 "sudo chown telemetry:telemetry /opt/te
 The addon resolves the URL + key from (highest priority first):
 1. env vars `AICOMPANION_TELEMETRY_URL` / `AICOMPANION_TELEMETRY_KEY`
 2. `telemetry_url` / `telemetry_key` in the addon's `config.json`
-3. built-in defaults (URL = `http://52.77.213.181/api/events`, key = the public
-   ingest token baked into `telemetry.py`)
+3. built-in defaults (URL = `https://ucadtelemetry.duckdns.org/api/events`,
+   key = the public ingest token baked into `telemetry.py`)
 
 Every request must include the header `X-Api-Key: <key>` (already handled by
 `telemetry.py`). `/health` is public so clients can probe reachability; all
@@ -80,13 +81,18 @@ The addon shows a one-time consent dialog before telemetry starts. Users who
 decline never send data. The setting can be toggled in Settings → "Share
 anonymous usage statistics".
 
-## HTTPS (recommended)
+## HTTPS (live)
 
-Plain HTTP sends user commands unencrypted. The `redlightai.duckdns.org` cert
-already covers TLS on this box. To serve telemetry over HTTPS, add a DNS A
-record for a telemetry subdomain pointing at `52.77.213.181`, then:
-`sudo certbot --nginx -d telemetry.example.com` and update the addon's URL to
-the `https://` value.
+Telemetry is served over TLS at `https://ucadtelemetry.duckdns.org` (Let's
+Encrypt, auto-renews). HTTP on port 80 redirects (301) to HTTPS, and the
+cert is trusted by the client's default urllib verification.
+
+To obtain the cert (if ever redeploying on a new box):
+1. Point a duckdns domain at the instance IP and verify DNS.
+2. `sudo certbot certonly --standalone -d <domain>.duckdns.org` (nginx must be
+   stopped for the challenge).
+3. Install `deploy/telemetry-https-nginx.conf` (edit the domain to match) and
+   `sudo systemctl reload nginx`.
 
 ## Export training data
 

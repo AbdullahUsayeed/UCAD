@@ -67,7 +67,7 @@ def _effective_server_url():
     cfg_url = _load_config().get("telemetry_url", "")
     if cfg_url:
         return cfg_url.rstrip("/") + "/api/events"
-    return "http://52.77.213.181/api/events"
+    return "https://ucadtelemetry.duckdns.org/api/events"
 
 
 def _effective_api_key():

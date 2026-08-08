@@ -18,7 +18,7 @@
   "ollama_url": "http://localhost:11434",
   "ollama_model": "llama3",
   "proxy_url": "",
-  "telemetry_url": "http://52.77.213.181/api/events",
+  "telemetry_url": "https://ucadtelemetry.duckdns.org/api/events",
   "telemetry_key": "",
   "version": 1
 }
