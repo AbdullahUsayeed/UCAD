@@ -39,7 +39,7 @@ jobs:
 
       - name: Build release package
         run: |
-          python tools/package_release.py --skip-obfuscate
+          python tools/package_release.py
 
       - name: Get version from package.xml
         id: version

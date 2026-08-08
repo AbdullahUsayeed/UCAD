@@ -49,5 +49,5 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`, which:
 
 ## Notes
 
-- Project is **LGPL-2.0-or-later open source** — no source obfuscation.
+- Project is **LGPL-2.1-or-later open source** — no source obfuscation.
 - The installer ships plain source staged via `python tools/stage_mod.py`.

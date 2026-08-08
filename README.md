@@ -101,7 +101,7 @@ Install dependencies:
 
 ## License
 
-Open source (LGPL-2.0-or-later). Free for all use.
+Open source (LGPL-2.1-or-later). Free for all use.
 
 ## Privacy
 

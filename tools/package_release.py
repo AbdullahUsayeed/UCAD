@@ -1,14 +1,16 @@
 """package_release.py — Build a deployable .zip for UCAD Assistant.
 
 Usage:
-    python tools/package_release.py                 # full: obfuscate + zip
-    python tools/package_release.py --skip-obfuscate  # plain copy + zip
+    python tools/package_release.py
 
 Output: UCAD-{version}.zip at repo root, ready for GitHub Releases.
 
+The project is LGPL-2.1-or-later open source, so the package ships the
+plain source (no obfuscation).
+
 Zip structure:
     UCAD-{version}/
-    ├── AICompanion/          # the addon directory (obfuscated or plain)
+    ├── AICompanion/          # the addon directory
     │   ├── Init.py
     │   ├── InitGui.py
     │   ├── ... (all modules)
@@ -19,13 +21,10 @@ Zip structure:
 
 import os
 import shutil
-import subprocess
-import sys
 import zipfile
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent.parent
-RELEASE_DIR = SOURCE.parent / "AICompanion_Release"
 
 
 def get_version() -> str:
@@ -43,29 +42,8 @@ def get_version() -> str:
     return ver.strip()
 
 
-def run_build_release() -> Path:
-    print("=" * 60)
-    print("Step 1: Running obfuscated build (build_release.py)...")
-    print("=" * 60)
-
-    build_script = SOURCE / "tools" / "build_release.py"
-    if not build_script.exists():
-        print("WARNING: build_release.py not found, skipping obfuscation")
-        return Path()
-
-    result = subprocess.run(
-        [sys.executable, str(build_script)],
-        capture_output=False, text=True, timeout=600,
-    )
-    if result.returncode != 0:
-        print("WARNING: build_release.py failed, falling back to plain source")
-        return Path()
-
-    return RELEASE_DIR
-
-
 def copy_plain_source(out_dir: Path):
-    print("Using plain source files (no obfuscation).")
+    print("Copying plain open-source source (LGPL-2.1-or-later).")
 
     exclude_patterns = {
         "__pycache__", ".git", ".github", ".pytest_cache",
@@ -76,12 +54,8 @@ def copy_plain_source(out_dir: Path):
     }
     exclude_extensions = {".pyc", ".cover", ".tmp", ".zip"}
 
-    def excluded_dir(name: str) -> bool:
-        return name in exclude_patterns
-
     for dirpath, dirnames, filenames in os.walk(SOURCE):
         dirpath_p = Path(dirpath)
-        rel_dir = dirpath_p.relative_to(SOURCE)
         # Prune excluded directories so we never traverse huge trees
         dirnames[:] = [
             d for d in dirnames
@@ -114,7 +88,7 @@ def copy_plain_source(out_dir: Path):
         print(f"  Copied .python-deps/: {size_mb:.1f} MB")
 
 
-def build_package(skip_obfuscate: bool = False):
+def build_package():
     version = get_version()
     zip_name = f"UCAD-{version}.zip"
     zip_path = SOURCE / zip_name
@@ -124,16 +98,7 @@ def build_package(skip_obfuscate: bool = False):
         shutil.rmtree(staging)
 
     addon_dir = staging / "AICompanion"
-
-    if skip_obfuscate:
-        copy_plain_source(addon_dir)
-    else:
-        release_dir = run_build_release()
-        if release_dir.exists():
-            print(f"\nCopying obfuscated release from {release_dir} ...")
-            shutil.copytree(release_dir, addon_dir)
-        else:
-            copy_plain_source(addon_dir)
+    copy_plain_source(addon_dir)
 
     for installer in ["install.bat", "install.sh"]:
         src = SOURCE / installer
@@ -142,7 +107,7 @@ def build_package(skip_obfuscate: bool = False):
             print(f"  Copied {installer}")
 
     print(f"\n{'=' * 60}")
-    print(f"Step 2: Creating {zip_name} ...")
+    print(f"Creating {zip_name} ...")
     print("=" * 60)
 
     if zip_path.exists():
@@ -171,5 +136,4 @@ def build_package(skip_obfuscate: bool = False):
 
 
 if __name__ == "__main__":
-    skip = "--skip-obfuscate" in sys.argv
-    build_package(skip_obfuscate=skip)
+    build_package()
