@@ -3,8 +3,8 @@ import json
 import os
 from compat import QtWidgets, QtCore, QtGui, Qt
 from secret_store import load_json_file
-from orchestrator.licensing import LicenseManager, BUY_URL
 from orchestrator.providers import _provider_tuning
+from telemetry import has_consent, record_consent
 
 SETTINGS_KEYS = [
     "retries_per_step", "auto_replan", "sandbox_mode", "max_defer_attempts",
@@ -113,6 +113,16 @@ def show_settings_dialog(sidebar):
     sandbox_cb.setChecked(bool(s["sandbox_mode"]))
     l.addWidget(sandbox_cb)
 
+    telemetry_cb = QtWidgets.QCheckBox(
+        "Share anonymous usage statistics to improve UCAD Assistant"
+    )
+    telemetry_cb.setChecked(has_consent() is True)
+    telemetry_cb.setToolTip(
+        "Sends anonymized CAD commands and AI-generated scripts to our server "
+        "to train better models. No document or personal data is collected."
+    )
+    l.addWidget(telemetry_cb)
+
     r2 = QtWidgets.QHBoxLayout()
     r2.setSpacing(8)
     defer_spin = QtWidgets.QSpinBox()
@@ -124,143 +134,6 @@ def show_settings_dialog(sidebar):
     r2.addWidget(QtWidgets.QLabel("(retry scheduling attempts)"))
     r2.addStretch()
     l.addLayout(r2)
-
-    # ── LICENSE ──────────────────────────────────────────────
-    l.addWidget(_section("\U0001f512 License"))
-
-    lm = LicenseManager()
-
-    r_lic = QtWidgets.QHBoxLayout()
-    r_lic.setSpacing(8)
-    lic_input = QtWidgets.QLineEdit()
-    lic_input.setPlaceholderText("USYD-XXXX-XXXX-XXXX")
-    existing_key = lm.get_license_key()
-    if existing_key:
-        lic_input.setText(existing_key[:4] + "‑" + "•" * 11 + existing_key[-4:])
-        lic_input.setReadOnly(True)
-    r_lic.addWidget(QtWidgets.QLabel("License key:"))
-    r_lic.addWidget(lic_input, 1)
-
-    lic_status = QtWidgets.QLabel("Checking...")
-    lic_status.setStyleSheet("font-size:11px; padding:2px 0;")
-
-    def _update_lic_status():
-        cached = lm._read_cache()
-        if not existing_key and not lic_input.text().strip():
-            lic_status.setText("🔓 Unlicensed — no key set")
-            lic_status.setStyleSheet("font-size:11px; color:#f0c040; padding:2px 0;")
-        elif cached and cached.get("valid"):
-            c = cached.get("activation_count", 0)
-            m = cached.get("max_activations", 3)
-            lic_status.setText(f"✅ Active — {c} of {m} machines")
-            lic_status.setStyleSheet("font-size:11px; color:#40f070; padding:2px 0;")
-        else:
-            lic_status.setText("⚠️ Not validated — click Activate")
-            lic_status.setStyleSheet("font-size:11px; color:#f07040; padding:2px 0;")
-
-    _update_lic_status()
-
-    def _do_activate():
-        key = lic_input.text().strip()
-        if not key:
-            lic_status.setText("⚠️ Enter a license key first")
-            lic_status.setStyleSheet("font-size:11px; color:#f07040; padding:2px 0;")
-            return
-        if "•" in key:
-            lic_status.setText("License already set — no changes needed")
-            return
-        lic_status.setText("⏳ Validating...")
-        lic_status.setStyleSheet("font-size:11px; color:#f0c040; padding:2px 0;")
-
-        def _run():
-            result = lm.validate(key)
-            d._lic_thread_result = result
-
-        def _done():
-            result = getattr(d, "_lic_thread_result", {})
-            if result.get("valid"):
-                lm.set_license_key(key)
-                lic_status.setText(f"✅ Active — {result.get('activation_count', 0)} of {result.get('max_activations', 3)} machines")
-                lic_status.setStyleSheet("font-size:11px; color:#40f070; padding:2px 0;")
-                lic_input.setText(key[:4] + "‑" + "•" * 11 + key[-4:])
-                lic_input.setReadOnly(True)
-            else:
-                err = result.get("error", "unknown")
-                msgs = {
-                    "invalid_key": "Invalid license key",
-                    "expired": "License has expired",
-                    "max_activations_reached": f"Max activations ({result.get('max_activations', 3)}) reached",
-                    "network_error": "Network error — check internet",
-                    "no_key": "Enter a license key",
-                }
-                lic_status.setText(f"❌ {msgs.get(err, err)}")
-                lic_status.setStyleSheet("font-size:11px; color:#f05050; padding:2px 0;")
-
-        thread = threading.Thread(target=_run, daemon=True)
-        thread.start()
-        d._lic_thread = thread
-        timer = QtCore.QTimer(d)
-        timer.setSingleShot(True)
-        timer.timeout.connect(lambda: _poll_thread(d, thread, _done, timer))
-        timer.start(100)
-
-    def _poll_thread(dlg, t, cb, timer):
-        if t.is_alive():
-            timer.start(100)
-            return
-        cb()
-
-    def _do_deactivate():
-        lic_status.setText("⏳ Deactivating...")
-        lic_status.setStyleSheet("font-size:11px; color:#f0c040; padding:2px 0;")
-
-        def _run():
-            result = lm.deactivate()
-            d._lic_deact_result = result
-
-        def _done():
-            result = getattr(d, "_lic_deact_result", {})
-            if result.get("ok"):
-                lm.set_license_key("")
-                lic_input.clear()
-                lic_input.setReadOnly(False)
-                lic_status.setText("🔓 Deactivated — enter a key to reactivate")
-                lic_status.setStyleSheet("font-size:11px; color:#f0c040; padding:2px 0;")
-            else:
-                lic_status.setText(f"❌ Deactivation failed: {result.get('error', 'unknown')}")
-                lic_status.setStyleSheet("font-size:11px; color:#f05050; padding:2px 0;")
-
-        thread = threading.Thread(target=_run, daemon=True)
-        thread.start()
-        timer = QtCore.QTimer(d)
-        timer.setSingleShot(True)
-        timer.timeout.connect(lambda: _poll_thread(d, thread, _done, timer))
-        timer.start(100)
-
-    lic_btn_activate = QtWidgets.QPushButton("Activate")
-    lic_btn_activate.setFixedWidth(100)
-    lic_btn_activate.clicked.connect(_do_activate)
-
-    lic_btn_deactivate = QtWidgets.QPushButton("Deactivate")
-    lic_btn_deactivate.setFixedWidth(100)
-    lic_btn_deactivate.clicked.connect(_do_deactivate)
-    if not existing_key:
-        lic_btn_deactivate.setEnabled(False)
-
-    lic_buy_link = QtWidgets.QLabel('<a href="#" style="color:#63a5ff;">Buy a license</a>')
-    lic_buy_link.setOpenExternalLinks(False)
-    lic_buy_link.linkActivated.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl(BUY_URL)))
-
-    r_lic_btns = QtWidgets.QHBoxLayout()
-    r_lic_btns.setSpacing(8)
-    r_lic_btns.addWidget(lic_btn_activate)
-    r_lic_btns.addWidget(lic_btn_deactivate)
-    r_lic_btns.addWidget(lic_buy_link)
-    r_lic_btns.addStretch()
-
-    l.addLayout(r_lic)
-    l.addWidget(lic_status)
-    l.addLayout(r_lic_btns)
 
     # ── APPEARANCE ──────────────────────────────────────────
     l.addWidget(_section("\U0001f3a8 Appearance"))
@@ -353,6 +226,28 @@ def show_settings_dialog(sidebar):
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
     )
 
+    def _apply_telemetry_consent(enabled):
+        record_consent(enabled)
+        try:
+            import FreeCADGui
+            collector = getattr(FreeCADGui, "_telemetry", None)
+            if enabled and collector is None:
+                from telemetry import TelemetryCollector
+                tc = TelemetryCollector()
+                FreeCADGui._telemetry = tc
+                tc.install_do_command_hook()
+                tc.install_run_command_hook()
+                tc.install_report_view_hook()
+                tc._hook_python_console()
+            elif not enabled and collector is not None:
+                try:
+                    collector.shutdown()
+                except Exception:
+                    pass
+                FreeCADGui._telemetry = None
+        except Exception:
+            pass
+
     def _accept():
         s["retries_per_step"] = retry_spin.value()
         s["auto_replan"] = auto_replan_cb.isChecked()
@@ -364,6 +259,7 @@ def show_settings_dialog(sidebar):
         s["temperature"] = temp_slider.value() / 100
         s["max_history_length"] = history_spin.value()
         s["max_tokens"] = tokens_spin.value()
+        _apply_telemetry_consent(telemetry_cb.isChecked())
         sidebar._apply_settings(s)
         d.accept()
 

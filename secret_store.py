@@ -32,7 +32,7 @@ except ImportError:
     pass
 
 
-SECRET_KEYS = ("api_key", "license_key")
+SECRET_KEYS = ("api_key",)
 _ENTROPY_PREFIX = "AICompanion"
 _SERVICE_NAME = "freecad-ai-companion"
 

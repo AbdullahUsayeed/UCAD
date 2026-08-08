@@ -2,7 +2,6 @@
 
 Provides a one-click health check that tests:
   ✓ Internet connectivity
-  ✓ License validity
   ✓ API key + provider reachability
   ✓ FreeCAD installation + version
   ✓ Mod integrity
@@ -71,10 +70,7 @@ def run_diagnostics() -> DiagnosticsReport:
     # 1. Internet
     _check_internet(report)
 
-    # 2. License
-    _check_license(report)
-
-    # 3. API Key + Provider
+    # 2. API Key + Provider
     _check_api(report, cfg, secrets)
 
     # 4. FreeCAD
@@ -100,21 +96,6 @@ def _check_internet(report: DiagnosticsReport) -> None:
         report.checks.append(CheckResult("Internet", True, "Connected", (time.time() - t0) * 1000))
     except Exception as e:
         report.checks.append(CheckResult("Internet", False, str(e), (time.time() - t0) * 1000))
-
-
-def _check_license(report: DiagnosticsReport) -> None:
-    t0 = time.time()
-    try:
-        from orchestrator.licensing import LicenseManager
-        lic = LicenseManager()
-        if lic.is_activated():
-            report.checks.append(CheckResult("License", True, f"Active ({lic.get_license_type()})", (time.time() - t0) * 1000))
-        else:
-            report.checks.append(CheckResult("License", False, "No active license", (time.time() - t0) * 1000))
-    except ImportError:
-        report.checks.append(CheckResult("License", True, "No licensing module (open source mode)", (time.time() - t0) * 1000))
-    except Exception as e:
-        report.checks.append(CheckResult("License", False, str(e), (time.time() - t0) * 1000))
 
 
 def _check_api(report: DiagnosticsReport, cfg: dict, secrets: dict) -> None:

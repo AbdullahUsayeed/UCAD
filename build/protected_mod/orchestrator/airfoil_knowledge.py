@@ -1,7 +1,0 @@
-import re
-AIRFOIL_KNOWLEDGE = '\n\n\n\n\n\n\n\ndef naca4(number, n=60):\n\n    m, p, t = int(number[0]) / 100.0, int(number[1]) / 10.0, int(number[2:]) / 100.0\n    xs = [0.5 * (1 - math.cos(math.pi * i / (n - 1))) for i in range(n)]\n    yt = [5 * t * (0.2969 * xc ** 0.5 - 0.1260 * xc - 0.3516 * xc ** 2\n                   + 0.2843 * xc ** 3 - 0.1015 * xc ** 4) for xc in xs]\n    yc = [(m / p ** 2 * (2 * p * xc - xc ** 2)) if (p > 0 and xc < p)\n          else ((m / (1 - p) ** 2 * (1 - 2 * p + 2 * p * xc - xc ** 2)) if p > 0 else 0.0)\n          for xc in xs]\n    upper = [(x, c + tk) for x, c, tk in zip(xs, yc, yt)]\n    lower = [(x, c - tk) for x, c, tk in zip(xs, yc, yt)]\n    return upper, lower\n\n\n\n\ndef airfoil_bspline(number, chord=100.0):\n    upper, lower = naca4(number)\n    ordered = upper + list(reversed(lower))\n    pts = [FreeCAD.Vector(x * chord, y * chord, 0) for x, y in ordered]\n    spline = Draft.make_bspline(pts, closed=True)\n    doc.recompute()\n    return spline\n\n\nfoil = airfoil_bspline("2412", chord=100.0)\nface = Part.Face(foil.Shape.Wires[0])\nsolid = face.extrude(FreeCAD.Vector(0, 0, 300.0))\nPart.show(solid, "Wing")\ndoc.recompute()\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n'
-_AIRFOIL_TRIGGERS = re.compile('\\b(airfoil|aerofoil|naca|wing|winglet|chord|wingspan|lift\\s+surface)\\b', re.IGNORECASE)
-def should_inject_airfoil(user_input):
-    if not user_input:
-        return False
-    return bool(_AIRFOIL_TRIGGERS.search(user_input))

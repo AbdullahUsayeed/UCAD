@@ -6,11 +6,11 @@
   <version>1.0.2</version>
   <date>2026-07-09</date>
   <maintainer email="usayeed@example.com">Usayeed</maintainer>
-  <license>LicenseRef-Proprietary</license>
+  <license>LGPL-2.0-or-later</license>
   <url type="repository" branch="master">https://github.com/AbdullahUsayeed/UCAD</url>
   <url type="bugtracker">https://github.com/AbdullahUsayeed/UCAD/issues</url>
   <url type="readme">https://github.com/AbdullahUsayeed/UCAD/blob/master/README.md</url>
-  <url type="license">https://github.com/AbdullahUsayeed/UCAD/blob/master/LICENSE</url>
+  <url type="license">https://www.gnu.org/licenses/old-licenses/lgpl-2.0.html</url>
 
   <!-- FreeCAD version requirements -->
   <freecadmin>0.21</freecadmin>

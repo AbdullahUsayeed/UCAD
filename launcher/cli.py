@@ -77,9 +77,7 @@ def cmd_config(args):
     print(json.dumps(cfg, indent=2))
 
     has_key = bool(secrets.get("api_key"))
-    has_license = bool(secrets.get("license_key"))
     print(f"\nAPI Key: {'SET' if has_key else 'NOT SET'}")
-    print(f"License: {'SET' if has_license else 'NOT SET'}")
     return 0
 
 

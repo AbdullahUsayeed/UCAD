@@ -60,7 +60,6 @@ def save_config(cfg: dict[str, Any]) -> None:
     merged["version"] = CONFIG_VERSION
     # Strip secrets before writing config
     merged.pop("api_key", None)
-    merged.pop("license_key", None)
     atomic_write(CONFIG_FILE, merged)
 
 
@@ -73,7 +72,7 @@ def atomic_write(path, data: dict) -> None:
 
 # ── Secrets ────────────────────────────────────────────────
 
-SECRET_KEYS = {"api_key", "license_key"}
+SECRET_KEYS = {"api_key"}
 
 
 def load_secrets() -> dict[str, str]:

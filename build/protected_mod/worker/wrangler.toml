@@ -1,8 +1,0 @@
-name = "ai-companion-licensing"
-main = "index.js"
-compatibility_date = "2025-01-01"
-account_id = "4103823a8b58c898867f0bf42dbdb847"
-
-kv_namespaces = [
-  { binding = "AI_COMPANION_LICENSES", id = "96758b355128465bbd305d8cbf0cdac6" }
-]
