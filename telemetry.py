@@ -23,6 +23,26 @@ import re
 import urllib.request
 import urllib.error
 
+import ssl as _ssl
+
+_HTTP_SSL_CONTEXT = None
+
+
+def _http_context():
+    """HTTPS context that avoids the deprecated PROTOCOL_TLS default path
+    (which emits ssl.PROTOCOL_TLS is deprecated on Python 3.10+)."""
+    global _HTTP_SSL_CONTEXT
+    if _HTTP_SSL_CONTEXT is None:
+        try:
+            ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = True
+            ctx.verify_mode = _ssl.CERT_REQUIRED
+            ctx.load_default_certs()
+            _HTTP_SSL_CONTEXT = ctx
+        except Exception:
+            _HTTP_SSL_CONTEXT = _ssl.create_default_context()
+    return _HTTP_SSL_CONTEXT
+
 
 _ADDON_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _LOG_PREFIX = "[AICompanion:Telemetry] "
@@ -263,7 +283,7 @@ class TelemetryCollector:
             req = urllib.request.Request(f"{base}/health", method="GET")
             if API_KEY:
                 req.add_header("X-Api-Key", API_KEY)
-            resp = urllib.request.urlopen(req, timeout=5)
+            resp = urllib.request.urlopen(req, timeout=5, context=_http_context())
             return resp.status == 200
         except Exception:
             return False
@@ -510,26 +530,35 @@ class TelemetryCollector:
                     _log("Python console hooked via child QPlainTextEdit")
                     return
 
-            _last_console = console.toPlainText() if hasattr(console, "toPlainText") else ""
+            edit = None
+            if hasattr(console, "textChanged") and hasattr(console, "toPlainText"):
+                edit = console
+            else:
+                for child in console.findChildren(QtWidgets.QWidget):
+                    if hasattr(child, "textChanged") and hasattr(child, "toPlainText"):
+                        edit = child
+                        break
 
-            def _on_console_change():
-                nonlocal _last_console
-                try:
-                    cur = console.toPlainText() if hasattr(console, "toPlainText") else ""
-                    if len(cur) > len(_last_console):
-                        diff = cur[len(_last_console):]
-                        _last_console = cur
-                        for line in diff.split("\n"):
-                            s = line.strip()
-                            if s and not s.startswith(">>>") and not s.startswith("..."):
-                                collector._capture(s, "console_input")
-                    else:
-                        _last_console = cur
-                except Exception:
-                    pass
+            if edit is not None:
+                _last_console = edit.toPlainText()
 
-            if hasattr(console, "textChanged"):
-                console.textChanged.connect(_on_console_change)
+                def _on_console_change():
+                    nonlocal _last_console
+                    try:
+                        cur = edit.toPlainText()
+                        if len(cur) > len(_last_console):
+                            diff = cur[len(_last_console):]
+                            _last_console = cur
+                            for line in diff.split("\n"):
+                                s = line.strip()
+                                if s and not s.startswith(">>>") and not s.startswith("..."):
+                                    collector._capture(s, "console_input")
+                        else:
+                            _last_console = cur
+                    except Exception:
+                        pass
+
+                edit.textChanged.connect(_on_console_change)
                 _log("Python console hooked via textChanged polling")
             else:
                 _warn("Python console widget found but no signal available")
@@ -651,7 +680,7 @@ class TelemetryCollector:
                 headers=headers,
                 method="POST",
             )
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=15, context=_http_context())
             if resp.status == 200:
                 self._mark_uploaded(ids)
             else:
