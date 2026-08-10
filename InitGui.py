@@ -214,6 +214,26 @@ def _maybe_start_telemetry():
         pass
 
 
+# FreeCAD loads InitGui.py by exec() inside a method (no namespace); top-level
+# defs land in frame locals, but functions/classes created here resolve names at
+# call time via module globals. Publish them so deferred callbacks (the telemetry
+# timer, workbench methods) can resolve them later.
+try:
+    _gl = globals()
+    for _n in (
+        "_make_icon",
+        "AICompanionCommand",
+        "AICompanionWorkbench",
+        "_ask_telemetry_consent",
+        "_maybe_start_telemetry",
+        "_restore",
+        "_make_filter",
+    ):
+        _gl[_n] = locals()[_n]
+    del _gl, _n
+except Exception:
+    pass
+
 try:
     import threading
     threading.Timer(2.0, _maybe_start_telemetry).start()
