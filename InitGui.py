@@ -8,7 +8,7 @@ _deps_dir = _os.path.join(_ADDON_DIR, ".python-deps")
 if _os.path.isdir(_deps_dir) and _deps_dir not in _sys.path:
     _sys.path.insert(0, _deps_dir)
 del _deps_dir
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 if _os.environ.get("UCAD_LAUNCHED"):
     FreeCAD.Console.PrintLog("[UCAD] Launched by UCAD Launcher\n")
@@ -134,7 +134,7 @@ except Exception as e:
 class AICompanionWorkbench(FreeCADGui.Workbench):
     WorkbenchId = "UCADAssistant"
     MenuText = "UCAD Assistant"
-    ToolTip = "Usayeed AI CAD Agent v1.1.0"
+    ToolTip = "Usayeed AI CAD Agent v1.1.1"
     
     def Initialize(self):
         import traceback

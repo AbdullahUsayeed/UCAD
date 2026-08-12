@@ -15,7 +15,7 @@
 ; which reliably handles the thousands of vendored dependency files.
 
 #define MyAppName "UCAD Assistant"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "USAYEED LLC"
 #define MyAppURL "https://github.com/AbdullahUsayeed/UCAD"
 #define MyAppExeName "UCAD Launcher.exe"
