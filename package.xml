@@ -17,12 +17,11 @@
   <freecadmax>99.99</freecadmax>
 
   <!-- Python deps that FreeCAD Addon Manager can pip-install -->
-  <pythondeps>
-    <dep>ezdxf</dep>
-    <dep>shapely</dep>
-  </pythondeps>
+  <depend type="python">ezdxf</depend>
+  <depend type="python">shapely</depend>
 
-  <!-- Post-install script — installs vendored deps -->
+  <!-- Post-install script — installed by Addon Manager when supported; the
+       workbench also self-checks at init (see ensure_deps.py) as a fallback. -->
   <post_install>post_install.py</post_install>
 
   <content>

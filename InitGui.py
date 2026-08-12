@@ -145,6 +145,7 @@ class AICompanionWorkbench(FreeCADGui.Workbench):
             FreeCAD.Console.PrintError(f"AICompanion Initialize: {traceback.format_exc()}\n")
         self.appendToolbar("AI Tools", ["AI_Companion_Command"])
         self.appendMenu("AI Copilot", ["AI_Companion_Command"])
+        self._ensure_deps()
     
     def Activated(self):
         try:
@@ -153,6 +154,18 @@ class AICompanionWorkbench(FreeCADGui.Workbench):
         except Exception as e:
             import traceback
             FreeCAD.Console.PrintError(f"AICompanion Workbench.Activated failed: {e}\n{traceback.format_exc()}\n")
+
+    def _ensure_deps(self):
+        """Prompt/install missing vendored deps (FreeCAD 1.1 Addon Manager does
+        not run post_install.py, so check here as a fallback)."""
+        try:
+            from ensure_deps import ensure_deps
+            ensure_deps()
+        except Exception:
+            import traceback
+            FreeCAD.Console.PrintError(
+                f"AICompanion dependency check failed: {traceback.format_exc()}\n"
+            )
 
     def GetClassName(self):
         return "Gui::PythonWorkbench"
@@ -190,9 +203,28 @@ def _ask_telemetry_consent():
         return False
 
 
+def _start_telemetry_collector():
+    """Start the telemetry collector on a worker thread (network I/O)."""
+    try:
+        from telemetry import TelemetryCollector
+        tc = TelemetryCollector()
+        FreeCADGui._telemetry = tc
+        tc.install_do_command_hook()
+        tc.install_run_command_hook()
+        tc.install_report_view_hook()
+        tc._hook_python_console()
+    except Exception:
+        pass
+
+
 def _maybe_start_telemetry():
-    """Start the collector only if the user has agreed to telemetry."""
-    from telemetry import TelemetryCollector, has_consent, record_consent
+    """Start the collector only if the user has agreed to telemetry.
+
+    Runs on the GUI thread (scheduled via QtCore.QTimer) so the consent
+    QMessageBox is created on the main thread. The collector itself is then
+    started on a worker thread because it does network I/O.
+    """
+    from telemetry import has_consent, record_consent
     consent = has_consent()
     if consent is None:
         consent = _ask_telemetry_consent()
@@ -203,15 +235,8 @@ def _maybe_start_telemetry():
         )
     if not consent:
         return
-    try:
-        tc = TelemetryCollector()
-        FreeCADGui._telemetry = tc
-        tc.install_do_command_hook()
-        tc.install_run_command_hook()
-        tc.install_report_view_hook()
-        tc._hook_python_console()
-    except Exception:
-        pass
+    import threading
+    threading.Thread(target=_start_telemetry_collector, daemon=True).start()
 
 
 # FreeCAD loads InitGui.py by exec() inside a method (no namespace); top-level
@@ -226,6 +251,7 @@ try:
         "AICompanionWorkbench",
         "_ask_telemetry_consent",
         "_maybe_start_telemetry",
+        "_start_telemetry_collector",
         "_restore",
         "_make_filter",
     ):
@@ -234,8 +260,14 @@ try:
 except Exception:
     pass
 
+# Schedule telemetry consent on the GUI thread (Qt widgets must be created on
+# the main thread; a threading.Timer here caused a modal error popup on startup).
 try:
-    import threading
-    threading.Timer(2.0, _maybe_start_telemetry).start()
+    from compat import QtCore
+    QtCore.QTimer.singleShot(2000, _maybe_start_telemetry)
 except Exception:
-    pass
+    try:
+        import threading
+        threading.Timer(2.0, _maybe_start_telemetry).start()
+    except Exception:
+        pass
