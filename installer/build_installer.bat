@@ -36,7 +36,7 @@ echo.
 REM Step 2: Stage the Mod source for the installer
 echo [2/4] Staging Mod source...
 cd /d "%PROJECT_DIR%"
-python -c "import tools.stage_mod" 2>nul
+python tools\stage_mod.py
 if %ERRORLEVEL% neq 0 (
     echo ERROR: Mod staging failed. Is tools/stage_mod.py present?
     exit /b 1
